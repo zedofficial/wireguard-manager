@@ -12,14 +12,14 @@
 // ---- Auth guard ----
 if (session_status() === PHP_SESSION_NONE) session_start();
 if (!isset($_SESSION['authenticated'])) {
-    header('Location: /wireguard-manager/login.php');
+    header('Location: login.php');
     exit;
 }
 
 // ---- Session timeout (60 min) ----
 if (isset($_SESSION['login_time']) && (time() - $_SESSION['login_time']) > 3600) {
     session_destroy();
-    header('Location: /wireguard-manager/login.php?timeout=1');
+    header('Location: login.php?timeout=1');
     exit;
 }
 
