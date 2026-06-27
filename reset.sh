@@ -36,25 +36,32 @@ if command -v docker &>/dev/null; then
     echo -e "${GREEN}  ✔ Uptime Kuma removed.${RESET}"
 
     echo -e "${CYAN}  Removing Docker...${RESET}"
-    systemctl stop docker        2>/dev/null || true
-    systemctl stop docker.socket 2>/dev/null || true
-    systemctl disable docker     2>/dev/null || true
 
-    # Bring down docker0 bridge and veth interfaces
+    # Force-kill Docker — don't wait for graceful shutdown
+    systemctl kill --signal=SIGKILL docker 2>/dev/null || true
+    systemctl stop docker.socket        2>/dev/null || true
+    systemctl disable docker            2>/dev/null || true
+    pkill -9 dockerd                    2>/dev/null || true
+    pkill -9 containerd                 2>/dev/null || true
+    sleep 1
+
+    # Bring down docker0 bridge
     ip link set docker0 down 2>/dev/null || true
     ip link delete docker0   2>/dev/null || true
     ip link show 2>/dev/null | grep -o 'veth[^ @]*' | while read -r v; do
         ip link delete "${v}" 2>/dev/null || true
     done
 
-    # Remove Docker packages non-interactively with timeout
-    DEBIAN_FRONTEND=noninteractive apt-get remove -y -q \
-        docker-ce docker-ce-cli containerd.io \
-        docker-buildx-plugin docker-compose-plugin \
-        docker docker.io docker-compose 2>/dev/null || true
-    DEBIAN_FRONTEND=noninteractive apt-get autoremove -y -q 2>/dev/null || true
+    # Remove packages — timeout after 60s so it never hangs forever
+    DEBIAN_FRONTEND=noninteractive \
+        timeout 60 apt-get remove -y -q --allow-change-held-packages \
+            docker-ce docker-ce-cli containerd.io \
+            docker-buildx-plugin docker-compose-plugin \
+            docker docker.io docker-compose 2>/dev/null || true
+    DEBIAN_FRONTEND=noninteractive \
+        timeout 30 apt-get autoremove -y -q 2>/dev/null || true
 
-    # Remove Docker data
+    # Remove Docker data regardless of whether apt succeeded
     rm -rf /var/lib/docker /var/lib/containerd /etc/docker
     rm -f  /etc/apt/sources.list.d/docker.list
     rm -f  /etc/apt/keyrings/docker.gpg
