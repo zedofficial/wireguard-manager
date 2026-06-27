@@ -60,6 +60,7 @@ fi
 
 # ---- Write to file ----
 echo "${HASH}" > "${PASSWD_FILE}"
+chown root:www-data "${PASSWD_FILE}"
 chmod 640 "${PASSWD_FILE}"
 
 echo ""

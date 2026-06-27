@@ -1372,9 +1372,10 @@ www-data ALL=(ALL) NOPASSWD: /usr/sbin/wg
 EOF
     chmod 440 /etc/sudoers.d/wireguard-manager
 
-    # ---- Set default dashboard password (admin) ----
+    # Set default dashboard password (admin) — owned by root, readable by www-data
     echo "$(php -r "echo password_hash('admin', PASSWORD_DEFAULT);")" \
         > /opt/wireguard/dashboard.passwd
+    chown root:www-data /opt/wireguard/dashboard.passwd
     chmod 640 /opt/wireguard/dashboard.passwd
 
     local internal_ip
