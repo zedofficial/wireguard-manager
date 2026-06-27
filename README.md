@@ -404,4 +404,4 @@ wireguard-manager/
 
 ---
 
-*Built by Winter Storm Systems*
+*Built by ZED Official*
