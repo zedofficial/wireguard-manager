@@ -328,7 +328,15 @@ ask_interface() {
     echo -e "  Which network interface connects this server to the internet?"
     echo -e "  ${YELLOW}Auto-detected: ${DETECTED_IFACE}${RESET}\n"
     echo -e "  Available interfaces:"
-    ip -o link show | awk -F': ' '{print "    " $2}' | grep -v lo
+    # Filter out loopback, virtual, and container interfaces
+    ip -o link show \
+        | awk -F': ' '{print $2}' \
+        | grep -v -E '^(lo|docker[0-9]+|veth|br-|virbr|wg[0-9]+|tun|tap|dummy)' \
+        | sed 's/@.*//' \
+        | sort -u \
+        | while read -r iface; do
+            echo "    ${iface}"
+          done
     echo ""
     read -rp "  Interface [${DETECTED_IFACE}]: " NET_IFACE
     NET_IFACE="${NET_IFACE:-$DETECTED_IFACE}"

@@ -36,10 +36,19 @@ if command -v docker &>/dev/null; then
     echo -e "${GREEN}  ✔ Uptime Kuma removed.${RESET}"
 
     echo -e "${CYAN}  Removing Docker...${RESET}"
-    # Stop Docker so all veth interfaces are torn down cleanly
-    systemctl stop docker 2>/dev/null || true
+    # Stop Docker cleanly first — this tears down veth interfaces
+    systemctl stop docker       2>/dev/null || true
     systemctl stop docker.socket 2>/dev/null || true
-    systemctl disable docker 2>/dev/null || true
+    systemctl disable docker    2>/dev/null || true
+
+    # Explicitly bring down and delete docker0 bridge
+    ip link set docker0 down    2>/dev/null || true
+    ip link delete docker0      2>/dev/null || true
+
+    # Remove any lingering veth interfaces
+    ip link show 2>/dev/null | grep -o 'veth[^ @]*' | while read -r veth; do
+        ip link delete "${veth}" 2>/dev/null || true
+    done
 
     # Remove Docker packages
     apt-get remove -y docker-ce docker-ce-cli containerd.io \
@@ -48,7 +57,7 @@ if command -v docker &>/dev/null; then
         podman-docker 2>/dev/null || true
     apt-get autoremove -y 2>/dev/null || true
 
-    # Remove Docker data directories (removes all veth interfaces implicitly)
+    # Remove Docker data directories
     rm -rf /var/lib/docker
     rm -rf /var/lib/containerd
     rm -rf /etc/docker
