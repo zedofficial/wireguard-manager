@@ -52,14 +52,17 @@ if command -v docker &>/dev/null; then
         ip link delete "${v}" 2>/dev/null || true
     done
 
-    # Remove packages — timeout after 60s so it never hangs forever
+    # Remove packages — timeout after 10s, fall back to dpkg force-purge
+    echo -e "  ${YELLOW}Removing Docker packages (up to 10s)...${RESET}"
     DEBIAN_FRONTEND=noninteractive \
-        timeout 60 apt-get remove -y -q --allow-change-held-packages \
+        timeout 10 apt-get remove -y -q --allow-change-held-packages \
             docker-ce docker-ce-cli containerd.io \
             docker-buildx-plugin docker-compose-plugin \
-            docker docker.io docker-compose 2>/dev/null || true
+            docker docker.io docker-compose 2>/dev/null \
+    || dpkg --force-all --purge docker-ce docker-ce-cli containerd.io \
+            docker-buildx-plugin docker-compose-plugin 2>/dev/null || true
     DEBIAN_FRONTEND=noninteractive \
-        timeout 30 apt-get autoremove -y -q 2>/dev/null || true
+        timeout 10 apt-get autoremove -y -q 2>/dev/null || true
 
     # Remove Docker data regardless of whether apt succeeded
     rm -rf /var/lib/docker /var/lib/containerd /etc/docker
