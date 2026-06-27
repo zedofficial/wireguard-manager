@@ -171,6 +171,7 @@ SCRIPTS=(
     "wg-check-update"
     "wg-reset"
     "wg-show-qr"
+    "wg-get-config"
 )
 
 # Also re-download reset.sh to keep it current

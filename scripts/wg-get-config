@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# =============================================================================
+# wg-get-config
+# WireGuard Manager — Output client config file to stdout
+# Called by the PHP dashboard via sudo for config download.
+# Outputs the raw .conf file content — nothing else.
+#
+# Usage:
+#   sudo wg-get-config <client-name>
+# =============================================================================
+set -euo pipefail
+
+source /opt/wireguard/config.env 2>/dev/null || {
+    echo "ERROR: Cannot read config" >&2; exit 1
+}
+
+# ---- Sanitize input ----
+CLIENT_NAME="${1:-}"
+CLIENT_NAME="${CLIENT_NAME//[^a-zA-Z0-9_-]/}"
+
+if [[ -z "${CLIENT_NAME}" ]]; then
+    echo "Usage: wg-get-config <client-name>" >&2
+    exit 1
+fi
+
+# ---- Locate config file ----
+CONF_FILE="${WGM_CLIENTS_DIR}/${CLIENT_NAME}/${CLIENT_NAME}.conf"
+
+if [[ ! -f "${CONF_FILE}" ]]; then
+    echo "ERROR: Config not found for '${CLIENT_NAME}'" >&2
+    exit 1
+fi
+
+# ---- Output config to stdout ----
+cat "${CONF_FILE}"

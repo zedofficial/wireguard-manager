@@ -823,6 +823,7 @@ EOF
         wg-dashboard-passwd
         wg-check-update
         wg-show-qr
+        wg-get-config
     )
 
     local failed=0
@@ -1373,6 +1374,7 @@ www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-update
 www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-check-update
 www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-regen-qr
 www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-show-qr
+www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-get-config
 www-data ALL=(ALL) NOPASSWD: /opt/wireguard/backup.sh
 www-data ALL=(ALL) NOPASSWD: /bin/systemctl start wg-quick@wg0
 www-data ALL=(ALL) NOPASSWD: /bin/systemctl stop wg-quick@wg0

@@ -23,12 +23,16 @@ $action = preg_replace('/[^a-z]/', '', $_GET['action'] ?? $_POST['action'] ?? 'l
 
 // ---- Handle: download config ----
 if ($action === 'download' && $name) {
-    $conf = "/etc/wireguard/clients/{$name}/{$name}.conf";
-    if (file_exists($conf) && is_readable($conf)) {
+    $output = [];
+    $code   = 0;
+    exec('sudo wg-get-config ' . escapeshellarg($name) . ' 2>/dev/null', $output, $code);
+    if ($code === 0 && !empty($output)) {
+        $content = implode("\n", $output);
         header('Content-Type: text/plain; charset=utf-8');
         header("Content-Disposition: attachment; filename=\"{$name}.conf\"");
         header('Cache-Control: no-cache');
-        readfile($conf);
+        header('Content-Length: ' . strlen($content));
+        echo $content;
         exit;
     }
     $msg = "Config file not found for '{$name}'.";
