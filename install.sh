@@ -3,7 +3,7 @@
 # WireGuard Manager — install.sh
 # =============================================================================
 # Project   : WireGuard Manager
-# Author    : ZED Official
+# Author    : Winter Storm Systems
 # License   : MIT
 # Description:
 #   Interactive installer for WireGuard + client management scripts,
@@ -66,10 +66,20 @@ print_header() {
     clear
     echo -e "${CYAN}${BOLD}"
     echo "  ╔══════════════════════════════════════════════════╗"
-    echo "  ║        WireGuard Manager  v${WGM_VERSION}        ║"
-    echo "  ║               by ZED Official                    ║"
+    echo "  ║          WireGuard Manager  v${WGM_VERSION}             ║"
+    echo "  ║         by Winter Storm Systems                  ║"
     echo "  ╚══════════════════════════════════════════════════╝"
     echo -e "${RESET}"
+}
+
+# Used inside ask_* functions — shows the step without clearing the screen
+# so the user can see all their previous answers at once.
+print_question_header() {
+    local step="$1"
+    local total="$2"
+    local title="$3"
+    echo -e "\n${BLUE}${BOLD}  ── Step ${step} of ${total} — ${title}${RESET}"
+    echo -e "  ────────────────────────────────────────────────"
 }
 
 print_step() {
@@ -137,6 +147,22 @@ check_root() {
     if [[ "$EUID" -ne 0 ]]; then
         echo -e "${RED}${BOLD}  Error: This installer must be run as root.${RESET}"
         echo -e "  Run:  ${CYAN}sudo bash install.sh${RESET}\n"
+        exit 1
+    fi
+}
+
+check_not_piped() {
+    # When piped through curl | bash, stdin is the pipe not the terminal.
+    # read commands return immediately with empty strings, breaking the installer.
+    if [[ ! -t 0 ]]; then
+        echo ""
+        echo -e "${RED}${BOLD}  Error: Do not pipe this installer directly into bash.${RESET}"
+        echo ""
+        echo -e "  Running ${CYAN}curl ... | sudo bash${RESET} breaks interactive prompts."
+        echo -e "  Download the script first, then run it:\n"
+        echo -e "  ${CYAN}curl -fsSL https://raw.githubusercontent.com/zedofficial/wireguard-manager/main/install.sh -o install.sh${RESET}"
+        echo -e "  ${CYAN}sudo bash install.sh${RESET}"
+        echo ""
         exit 1
     fi
 }
@@ -230,8 +256,7 @@ detect_interface() {
 # =============================================================================
 
 ask_hostname() {
-    print_header
-    print_step "Step 1 of 9 — Hostname"
+    print_question_header 1 9 "Hostname"
     echo -e "  What hostname should this server use?"
     echo -e "  ${YELLOW}This is used in logs and the dashboard.${RESET}\n"
     local default_hostname
@@ -242,8 +267,7 @@ ask_hostname() {
 }
 
 ask_vpn_subnet() {
-    print_header
-    print_step "Step 2 of 9 — VPN Subnet"
+    print_question_header 2 9 "VPN Subnet"
     echo -e "  What subnet should the VPN use?"
     echo -e "  ${YELLOW}Default is 10.0.0.0/24 (supports up to 253 clients)${RESET}\n"
     read -rp "  VPN Subnet [10.0.0.0/24]: " VPN_SUBNET
@@ -257,8 +281,7 @@ ask_vpn_subnet() {
 }
 
 ask_endpoint() {
-    print_header
-    print_step "Step 3 of 9 — VPN Server Address"
+    print_question_header 3 9 "VPN Server Address"
     echo -e "  What is the public address clients will use to connect?"
     echo -e "  Examples:"
     echo -e "    ${CYAN}vpn.example.com${RESET}       (custom domain)"
@@ -284,8 +307,7 @@ ask_endpoint() {
 }
 
 ask_port() {
-    print_header
-    print_step "Step 4 of 9 — WireGuard Port"
+    print_question_header 4 9 "WireGuard Port"
     echo -e "  Which UDP port should WireGuard listen on?"
     echo -e "  ${YELLOW}Default is 51820. Change only if that port is blocked.${RESET}\n"
     read -rp "  WireGuard Port [51820]: " WG_PORT
@@ -301,8 +323,7 @@ ask_port() {
 }
 
 ask_interface() {
-    print_header
-    print_step "Step 5 of 9 — Network Interface"
+    print_question_header 5 9 "Network Interface"
     detect_interface
     echo -e "  Which network interface connects this server to the internet?"
     echo -e "  ${YELLOW}Auto-detected: ${DETECTED_IFACE}${RESET}\n"
@@ -315,8 +336,7 @@ ask_interface() {
 }
 
 ask_dns() {
-    print_header
-    print_step "Step 6 of 9 — DNS for VPN Clients"
+    print_question_header 6 9 "DNS for VPN Clients"
     echo -e "  Which DNS server should VPN clients use?\n"
     echo -e "  1) Pi-hole          (enter your Pi-hole IP)"
     echo -e "  2) AdGuard Home     (enter your AdGuard IP)"
@@ -356,8 +376,7 @@ ask_dns() {
 }
 
 ask_ddns() {
-    print_header
-    print_step "Step 7 of 9 — Dynamic DNS"
+    print_question_header 7 9 "Dynamic DNS"
     echo -e "  Do you have a dynamic IP? A DDNS provider keeps your domain"
     echo -e "  pointing to your current IP automatically.\n"
     echo -e "  1) DuckDNS          (free, easy)"
@@ -426,8 +445,7 @@ ask_ddns() {
 }
 
 ask_ipv6() {
-    print_header
-    print_step "Step 8 of 9 — IPv6 Support"
+    print_question_header 8 9 "IPv6 Support"
     echo -e "  Enable IPv6 on the VPN tunnel?"
     echo -e "  ${YELLOW}Only enable this if your server has a public IPv6 address.${RESET}\n"
     read -rp "  Enable IPv6? [y/N]: " ipv6_choice
@@ -444,8 +462,7 @@ ask_ipv6() {
 }
 
 ask_optional_components() {
-    print_header
-    print_step "Step 9 of 9 — Optional Components"
+    print_question_header 9 9 "Optional Components"
     echo -e "  Select which optional components to install:\n"
 
     read -rp "  Install PHP Dashboard?          [Y/n]: " install_dash
@@ -676,29 +693,43 @@ configure_firewall() {
     print_step "Configuring Firewall"
 
     if [[ "${UFW_AVAILABLE}" == true ]]; then
-        ufw allow "${WG_PORT}"/udp > /dev/null 2>&1
-        ufw allow OpenSSH > /dev/null 2>&1
+        # Allow WireGuard UDP port
+        ufw allow "${WG_PORT}"/udp > /dev/null 2>&1 || true
+
+        # Allow SSH — try app profile first, fall back to port number
+        # (minimal Ubuntu installs may not have UFW app profiles)
+        ufw allow OpenSSH > /dev/null 2>&1 || \
+        ufw allow 22/tcp  > /dev/null 2>&1 || true
+
         print_success "UFW: WireGuard port ${WG_PORT}/UDP allowed."
+        print_success "UFW: SSH allowed."
 
         if [[ "${INSTALL_DASHBOARD}" == true ]]; then
-            ufw allow 80/tcp  > /dev/null 2>&1
-            ufw allow 443/tcp > /dev/null 2>&1
+            ufw allow 80/tcp  > /dev/null 2>&1 || true
+            ufw allow 443/tcp > /dev/null 2>&1 || true
             print_success "UFW: HTTP/HTTPS allowed for dashboard."
         fi
 
         if [[ "${INSTALL_KUMA}" == true ]]; then
-            ufw allow 3001/tcp > /dev/null 2>&1
+            ufw allow 3001/tcp > /dev/null 2>&1 || true
             print_success "UFW: Port 3001/TCP allowed for Uptime Kuma."
+        fi
+
+        # Enable UFW non-interactively if not already active
+        if ! ufw status 2>/dev/null | grep -q "Status: active"; then
+            ufw --force enable > /dev/null 2>&1 || true
+            print_success "UFW: Firewall enabled."
         fi
 
         log_success "UFW rules configured."
     else
-        # Apply raw iptables rules directly if UFW is not present
+        # UFW not present — use raw iptables
         iptables -A INPUT -p udp --dport "${WG_PORT}" -j ACCEPT 2>/dev/null || true
         iptables -A INPUT -p tcp --dport 22 -j ACCEPT 2>/dev/null || true
         print_success "iptables: WireGuard port ${WG_PORT}/UDP allowed."
-        print_warn "UFW not installed. iptables rules applied (not persistent — install ufw or iptables-persistent to persist)."
-        log_warn "UFW not present. iptables rules may not persist across reboots."
+        print_warn "UFW not installed — rules applied via iptables but won't persist across reboots."
+        print_warn "To persist: sudo apt install iptables-persistent"
+        log_warn "UFW not present. iptables rules applied (not persistent)."
     fi
 }
 
@@ -1444,6 +1475,7 @@ print_completion() {
 # =============================================================================
 
 main() {
+    check_not_piped
     setup_logging
     check_root
     print_header

@@ -24,15 +24,13 @@ A self-hosted WireGuard installation and management system for Linux home server
 ## Installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/zedofficial/wireguard-manager/main/install.sh | sudo bash
-```
-
-Or download and run manually:
-
-```bash
-wget https://raw.githubusercontent.com/zedofficial/wireguard-manager/main/install.sh
+curl -fsSL https://raw.githubusercontent.com/zedofficial/wireguard-manager/main/install.sh -o install.sh
 sudo bash install.sh
 ```
+
+> **Do not pipe directly into bash** (`curl ... | sudo bash`). The installer is interactive — it needs to read keyboard input, which breaks when stdin is a pipe.
+
+
 
 The installer will ask you questions — no manual config file editing needed. It walks you through:
 
@@ -406,4 +404,4 @@ wireguard-manager/
 
 ---
 
-*Built by ZED Official*
+*Built by Winter Storm Systems*
