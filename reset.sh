@@ -27,17 +27,17 @@ echo -e "${CYAN}  Stopping WireGuard...${RESET}"
 systemctl stop    wg-quick@wg0 2>/dev/null || true
 systemctl disable wg-quick@wg0 2>/dev/null || true
 wg-quick down wg0              2>/dev/null || true
-echo -e "${GREEN}  ✔ WireGuard stopped.${RESET}"
+echo -e "${GREEN}✔ WireGuard stopped.${RESET}"
 
 # ---- Remove Uptime Kuma Docker container and volume ----
 if command -v docker &>/dev/null; then
-    echo -e "${CYAN}  Removing Uptime Kuma container...${RESET}"
+    echo -e "${CYAN}> Removing Uptime Kuma container...${RESET}"
     docker stop  uptime-kuma 2>/dev/null || true
     docker rm    uptime-kuma 2>/dev/null || true
     docker volume rm uptime-kuma 2>/dev/null || true
-    echo -e "${GREEN}  ✔ Uptime Kuma removed.${RESET}"
+    echo -e "${GREEN}✔ Uptime Kuma removed.${RESET}"
 
-    echo -e "${CYAN}  Removing Docker...${RESET}"
+    echo -e "${CYAN}> Removing Docker...${RESET}"
 
     # Force-kill Docker — don't wait for graceful shutdown
     systemctl kill --signal=SIGKILL docker 2>/dev/null || true
@@ -60,11 +60,11 @@ if command -v docker &>/dev/null; then
         timeout 10 apt-get remove -y -q --allow-change-held-packages \
             docker-ce docker-ce-cli containerd.io \
             docker-buildx-plugin docker-compose-plugin \
-            docker docker.io docker-compose 2>/dev/null \
+            docker docker.io docker-compose >/dev/null 2>&1 \
     || dpkg --force-all --purge docker-ce docker-ce-cli containerd.io \
-            docker-buildx-plugin docker-compose-plugin 2>/dev/null || true
+            docker-buildx-plugin docker-compose-plugin >/dev/null 2>&1 || true
     DEBIAN_FRONTEND=noninteractive \
-        timeout 10 apt-get autoremove -y -q 2>/dev/null || true
+        timeout 10 apt-get autoremove -y -q >/dev/null 2>&1 || true
 
     # Remove Docker data regardless of whether apt succeeded
     rm -rf /var/lib/docker /var/lib/containerd /etc/docker
@@ -72,29 +72,29 @@ if command -v docker &>/dev/null; then
     rm -f  /etc/apt/keyrings/docker.gpg
     rm -f  /etc/apt/keyrings/docker.asc
 
-    echo -e "${GREEN}  ✔ Docker removed.${RESET}"
+    echo -e "${GREEN}✔ Docker removed.${RESET}"
 else
     echo -e "  Docker not installed — skipping."
 fi
 
 # ---- Remove WireGuard packages ----
-echo -e "${CYAN}  Removing WireGuard packages...${RESET}"
-DEBIAN_FRONTEND=noninteractive apt-get remove -y -q wireguard wireguard-tools 2>/dev/null || true
-DEBIAN_FRONTEND=noninteractive apt-get autoremove -y -q 2>/dev/null || true
-echo -e "${GREEN}  ✔ WireGuard packages removed.${RESET}"
+echo -e "${CYAN}> Removing WireGuard packages...${RESET}"
+DEBIAN_FRONTEND=noninteractive apt-get remove -y -q wireguard wireguard-tools >/dev/null 2>&1 || true
+DEBIAN_FRONTEND=noninteractive apt-get autoremove -y -q >/dev/null 2>&1 || true
+echo -e "${GREEN}✔ WireGuard packages removed.${RESET}"
 
 # ---- Remove WireGuard config and client data ----
-echo -e "${CYAN}  Removing /etc/wireguard/...${RESET}"
+echo -e "${CYAN}> Removing /etc/wireguard/...${RESET}"
 rm -rf /etc/wireguard
-echo -e "${GREEN}  ✔ /etc/wireguard removed.${RESET}"
+echo -e "${GREEN}✔ /etc/wireguard removed.${RESET}"
 
 # ---- Remove WireGuard Manager data ----
-echo -e "${CYAN}  Removing /opt/wireguard/...${RESET}"
+echo -e "${CYAN}> Removing /opt/wireguard/...${RESET}"
 rm -rf /opt/wireguard
-echo -e "${GREEN}  ✔ /opt/wireguard removed.${RESET}"
+echo -e "${GREEN}✔ /opt/wireguard removed.${RESET}"
 
 # ---- Remove all wg-* commands ----
-echo -e "${CYAN}  Removing client scripts...${RESET}"
+echo -e "${CYAN}> Removing client scripts...${RESET}"
 rm -f /usr/local/bin/wg-add-client
 rm -f /usr/local/bin/wg-delete-client
 rm -f /usr/local/bin/wg-show-client
@@ -111,52 +111,52 @@ rm -f /usr/local/bin/wg-dashboard-passwd
 rm -f /usr/local/bin/wg-reset
 rm -f /usr/local/bin/wg-show-qr
 rm -f /usr/local/bin/wg-get-config
-echo -e "${GREEN}  ✔ Scripts removed.${RESET}"
+echo -e "${GREEN}✔ Scripts removed.${RESET}"
 
 # ---- Remove cron jobs ----
-echo -e "${CYAN}  Removing cron jobs...${RESET}"
+echo -e "${CYAN}> Removing cron jobs...${RESET}"
 rm -f /etc/cron.d/wireguard-ddns
 rm -f /etc/cron.d/wireguard-backup
 rm -f /etc/cron.d/wireguard-update-check
-echo -e "${GREEN}  ✔ Cron jobs removed.${RESET}"
+echo -e "${GREEN}✔ Cron jobs removed.${RESET}"
 
 # ---- Remove sysctl config ----
-echo -e "${CYAN}  Removing IP forwarding config...${RESET}"
+echo -e "${CYAN}> Removing IP forwarding config...${RESET}"
 rm -f /etc/sysctl.d/99-wireguard-manager.conf
 sysctl -w net.ipv4.ip_forward=0 > /dev/null 2>&1 || true
-echo -e "${GREEN}  ✔ sysctl config removed.${RESET}"
+echo -e "${GREEN}✔ sysctl config removed.${RESET}"
 
 # ---- Remove sudoers entry ----
-echo -e "${CYAN}  Removing sudoers entry...${RESET}"
+echo -e "${CYAN}> Removing sudoers entry...${RESET}"
 rm -f /etc/sudoers.d/wireguard-manager
-echo -e "${GREEN}  ✔ Sudoers entry removed.${RESET}"
+echo -e "${GREEN}✔ Sudoers entry removed.${RESET}"
 
 # ---- Remove dashboard ----
 if [[ -d /var/www/html/wireguard-manager ]]; then
-    echo -e "${CYAN}  Removing PHP dashboard...${RESET}"
+    echo -e "${CYAN}> Removing PHP dashboard...${RESET}"
     rm -rf /var/www/html/wireguard-manager
     a2dissite wireguard-manager.conf > /dev/null 2>&1 || true
     rm -f /etc/apache2/sites-available/wireguard-manager.conf
     systemctl reload apache2 2>/dev/null || true
-    echo -e "${GREEN}  ✔ Dashboard removed.${RESET}"
+    echo -e "${GREEN}✔ Dashboard removed.${RESET}"
 fi
 
 # ---- Remove UFW rules (use the port in case profile varies) ----
 if command -v ufw &>/dev/null; then
-    echo -e "${CYAN}  Removing UFW rules...${RESET}"
+    echo -e "${CYAN}> Removing UFW rules...${RESET}"
     ufw delete allow 51820/udp > /dev/null 2>&1 || true
     ufw delete allow 80/tcp    > /dev/null 2>&1 || true
     ufw delete allow 443/tcp   > /dev/null 2>&1 || true
     ufw delete allow 3001/tcp  > /dev/null 2>&1 || true
     ufw delete allow 22/tcp    > /dev/null 2>&1 || true
     ufw delete allow OpenSSH   > /dev/null 2>&1 || true
-    echo -e "${GREEN}  ✔ UFW rules removed.${RESET}"
+    echo -e "${GREEN}✔ UFW rules removed.${RESET}"
 fi
 
 # ---- Remove logs ----
-echo -e "${CYAN}  Removing logs...${RESET}"
+echo -e "${CYAN}> Removing logs...${RESET}"
 rm -rf /var/log/wireguard-manager
-echo -e "${GREEN}  ✔ Logs removed.${RESET}"
+echo -e "${GREEN}✔ Logs removed.${RESET}"
 
 # ---- Done ----
 echo ""
