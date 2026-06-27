@@ -125,18 +125,18 @@ foreach ($hs_lines as $hl) {
     if (count($parts) === 2) $handshakes[$parts[0]] = (int)$parts[1];
 }
 
-// ---- QR code for show action (base64 PNG via qrencode) ----
+// ---- QR code for show action — call wg-show-qr via sudo ----
 $qr_data = '';
 $qr_name = '';
 if ($action === 'show' && $name) {
     $conf_path = "/etc/wireguard/clients/{$name}/{$name}.conf";
-    if (file_exists($conf_path)) {
+    if (file_exists($conf_path) || true) { // sudo script checks internally
         $qr_name = $name;
-        $tmp = tempnam(sys_get_temp_dir(), 'wgm_qr_');
-        exec('qrencode -t PNG -o ' . escapeshellarg($tmp) . ' -r ' . escapeshellarg($conf_path) . ' 2>/dev/null', $dummy, $qr_code);
-        if ($qr_code === 0 && file_exists($tmp)) {
-            $qr_data = base64_encode(file_get_contents($tmp));
-            @unlink($tmp);
+        $output = [];
+        $code   = 0;
+        exec('sudo wg-show-qr ' . escapeshellarg($name) . ' 2>/dev/null', $output, $code);
+        if ($code === 0 && !empty($output)) {
+            $qr_data = implode('', $output);
         }
     }
 }

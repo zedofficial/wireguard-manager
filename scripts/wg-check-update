@@ -61,6 +61,7 @@ write_status() {
 }
 JSON
     chmod 644 "${STATUS_FILE}"
+    chown root:www-data "${STATUS_FILE}" 2>/dev/null || true
 }
 
 # ---- Get installed version ----

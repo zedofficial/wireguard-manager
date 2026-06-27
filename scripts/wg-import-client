@@ -176,6 +176,8 @@ fi
 
 # ---- Register in database ----
 echo "${CLIENT_NAME}|${CLIENT_IP}|${CLIENT_PUBLIC_KEY}|$(date '+%Y-%m-%d %H:%M:%S')|active" >> "${WGM_DB}"
+chown root:www-data "${WGM_DB}" 2>/dev/null || true
+chmod 640 "${WGM_DB}" 2>/dev/null || true
 
 echo ""
 echo -e "${GREEN}  Client '${CLIENT_NAME}' imported successfully.${RESET}"

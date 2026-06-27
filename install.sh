@@ -793,6 +793,7 @@ GITHUB_REPO="${GITHUB_REPO}"
 GITHUB_BRANCH="${GITHUB_BRANCH}"
 EOF
     chmod 640 "${WGM_DIR}/config.env"
+    chown root:www-data "${WGM_DIR}/config.env"
 
     # ---- Initialize client database ----
     # Format: name|ip|pubkey|created|status
@@ -800,6 +801,7 @@ EOF
         echo "# WireGuard Manager Client Database" > "${WGM_DB}"
         echo "# Format: name|ip|pubkey|created|status" >> "${WGM_DB}"
         chmod 640 "${WGM_DB}"
+        chown root:www-data "${WGM_DB}"
     fi
 
     # ---- Download all client scripts from GitHub ----
@@ -820,6 +822,7 @@ EOF
         wg-regen-qr
         wg-dashboard-passwd
         wg-check-update
+        wg-show-qr
     )
 
     local failed=0
@@ -861,6 +864,13 @@ STUB
         print_warn "${failed} script(s) were not downloaded. Run 'wg-update' once internet is confirmed."
         log_warn "Script download failures during install: ${failed}"
     fi
+
+    # Ensure www-data can read all WireGuard Manager data files
+    chown -R root:www-data "${WGM_DIR}"
+    find "${WGM_DIR}" -type f -exec chmod 640 {} \;
+    find "${WGM_DIR}" -type d -exec chmod 750 {} \;
+    # Scripts need to be executable
+    chmod 700 "${WGM_DIR}"/*.sh 2>/dev/null || true
 
     print_success "Client management scripts installed in ${BIN_DIR}."
     log_success "Client scripts installed."
@@ -1362,6 +1372,7 @@ www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-rename-client
 www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-update
 www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-check-update
 www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-regen-qr
+www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-show-qr
 www-data ALL=(ALL) NOPASSWD: /opt/wireguard/backup.sh
 www-data ALL=(ALL) NOPASSWD: /bin/systemctl start wg-quick@wg0
 www-data ALL=(ALL) NOPASSWD: /bin/systemctl stop wg-quick@wg0

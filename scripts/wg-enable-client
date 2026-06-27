@@ -106,5 +106,7 @@ else
         allowed-ips "${CLIENT_IP}/32" 2>/dev/null
 fi
 
+chown root:www-data "${WGM_DB}" 2>/dev/null || true
+chmod 640 "${WGM_DB}" 2>/dev/null || true
 echo -e "${GREEN}  Client '${CLIENT_NAME}' enabled and active.${RESET}"
 echo -e "  They can now connect immediately (no restart needed)."

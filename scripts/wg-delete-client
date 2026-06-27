@@ -103,6 +103,8 @@ fi
 
 # ---- Remove from database ----
 sed -i "/^${CLIENT_NAME}|/d" "${WGM_DB}"
+chown root:www-data "${WGM_DB}" 2>/dev/null || true
+chmod 640 "${WGM_DB}" 2>/dev/null || true
 echo -e "  ${GREEN}✔${RESET} Removed from client database."
 
 echo ""

@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# =============================================================================
+# wg-show-qr
+# WireGuard Manager — Output base64 PNG QR code for a client
+# Called by the PHP dashboard via sudo.
+# Outputs a raw base64-encoded PNG to stdout — no other output.
+#
+# Usage:
+#   sudo wg-show-qr <client-name>
+# =============================================================================
+set -euo pipefail
+
+source /opt/wireguard/config.env 2>/dev/null || {
+    echo "ERROR: Cannot read config" >&2; exit 1
+}
+
+# ---- Sanitize input ----
+CLIENT_NAME="${1:-}"
+CLIENT_NAME="${CLIENT_NAME//[^a-zA-Z0-9_-]/}"
+
+if [[ -z "${CLIENT_NAME}" ]]; then
+    echo "Usage: wg-show-qr <client-name>" >&2
+    exit 1
+fi
+
+# ---- Locate config file ----
+CONF_FILE="${WGM_CLIENTS_DIR}/${CLIENT_NAME}/${CLIENT_NAME}.conf"
+
+if [[ ! -f "${CONF_FILE}" ]]; then
+    echo "ERROR: Config not found for '${CLIENT_NAME}'" >&2
+    exit 1
+fi
+
+# ---- Generate QR code as base64 PNG ----
+# qrencode reads the conf file, outputs PNG to stdout, base64 encodes it
+qrencode -t PNG -o - -r "${CONF_FILE}" 2>/dev/null | base64

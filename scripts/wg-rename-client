@@ -125,6 +125,8 @@ with open(db_path, 'w') as f:
 print(f"  Database updated: '{old_name}' → '{new_name}'")
 PYEOF
 
+chown root:www-data "${WGM_DB}" 2>/dev/null || true
+chmod 640 "${WGM_DB}" 2>/dev/null || true
 echo -e "${GREEN}  Client successfully renamed to '${NEW_NAME}'.${RESET}"
 echo -e "  The client's VPN IP, keys, and connection are unchanged."
 echo -e "  Config file: ${CYAN}${WGM_CLIENTS_DIR}/${NEW_NAME}/${NEW_NAME}.conf${RESET}"

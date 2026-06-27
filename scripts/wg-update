@@ -170,6 +170,7 @@ SCRIPTS=(
     "wg-dashboard-passwd"
     "wg-check-update"
     "wg-reset"
+    "wg-show-qr"
 )
 
 # Also re-download reset.sh to keep it current
@@ -253,6 +254,8 @@ fi
 
 # ---- Write new version ----
 echo "${LATEST_VERSION}" > "${VERSION_FILE}"
+chown root:www-data "${VERSION_FILE}" 2>/dev/null || true
+chmod 644 "${VERSION_FILE}" 2>/dev/null || true
 
 # ---- Done ----
 echo ""
