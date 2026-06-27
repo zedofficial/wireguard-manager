@@ -66,8 +66,8 @@ print_header() {
     clear
     echo -e "${CYAN}${BOLD}"
     echo "  ╔══════════════════════════════════════════════════╗"
-    echo "  ║          WireGuard Manager  v${WGM_VERSION}             ║"
-    echo "  ║              by ZED Official                    ║"
+    printf "  ║%*s%s%*s║\n" 12 "" "WireGuard Manager  v${WGM_VERSION}" 13 ""
+    printf "  ║%*s%s%*s║\n" 17 "" "by ZED Official" 18 ""
     echo "  ╚══════════════════════════════════════════════════╝"
     echo -e "${RESET}"
 }
