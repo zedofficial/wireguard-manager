@@ -66,7 +66,7 @@ print_header() {
     clear
     echo -e "${CYAN}${BOLD}"
     echo "  ╔══════════════════════════════════════════════════╗"
-    echo "  ║          WireGuard Manager  v${WGM_VERSION}             ║"
+    echo "  ║             WireGuard Manager  v${WGM_VERSION}             ║"
     echo "  ║         by Winter Storm Systems                  ║"
     echo "  ╚══════════════════════════════════════════════════╝"
     echo -e "${RESET}"
