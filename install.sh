@@ -1310,6 +1310,7 @@ setup_dashboard() {
     cat > /etc/apache2/sites-available/wireguard-manager.conf <<EOF
 <VirtualHost *:80>
     ServerName ${SERVER_HOSTNAME}
+    ServerAlias *
     DocumentRoot ${DASHBOARD_DIR}
     DirectoryIndex index.php
 
