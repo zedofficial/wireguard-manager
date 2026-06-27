@@ -715,6 +715,8 @@ configure_firewall() {
         if [[ "${INSTALL_DASHBOARD}" == true ]]; then
             ufw allow 80/tcp  > /dev/null 2>&1 || true
             ufw allow 443/tcp > /dev/null 2>&1 || true
+            # Allow dashboard access from VPN clients
+            ufw allow in on wg0 to any port 80 > /dev/null 2>&1 || true
             print_success "UFW: HTTP/HTTPS allowed for dashboard."
         fi
 
@@ -1631,8 +1633,9 @@ print_completion() {
         local internal_ip
         internal_ip="$(ip route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}' || hostname -I 2>/dev/null | awk '{print $1}' || echo 'your-server-ip')"
         echo -e "\n  ${BOLD}Dashboard:${RESET}"
-        echo -e "  ${CYAN}URL      :${RESET} http://${internal_ip}:80"
-        echo -e "  ${CYAN}Password :${RESET} admin ${YELLOW}(change with: wg-dashboard-passwd)${RESET}"
+        echo -e "  ${CYAN}Local URL :${RESET} http://${internal_ip}:80"
+        echo -e "  ${CYAN}VPN URL   :${RESET} http://${SERVER_VPN_IP}  ${YELLOW}(use this when connected via VPN)${RESET}"
+        echo -e "  ${CYAN}Password  :${RESET} admin ${YELLOW}(change with: wg-dashboard-passwd)${RESET}"
     fi
 
     if [[ "${INSTALL_KUMA}" == true ]]; then
