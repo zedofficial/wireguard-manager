@@ -1405,9 +1405,7 @@ install_reset_script() {
 
     # Fallback: embed reset.sh inline so it's always available
     # even if the repo doesn't have it yet or GitHub is unreachable
-    if [[ "${downloaded}" == false ]]; then
-        log_warn "Could not download reset.sh from GitHub — embedding inline fallback."
-        cat > "${dest}" <<'RESET_EMBED'
+    cat > "${dest}" <<'RESET_EMBED'
 #!/usr/bin/env bash
 # WireGuard Manager — Clean Reset (embedded fallback)
 # For the latest version: https://raw.githubusercontent.com/zedofficial/wireguard-manager/main/reset.sh
@@ -1480,20 +1478,42 @@ echo ""
 SCRIPT_PATH="$(realpath "$0")"
 rm -f "${SCRIPT_PATH}"
 RESET_EMBED
-    fi
 
     chmod 700 "${dest}"
+    print_success "Reset script embedded and ready."
 
-    # Install as wg-reset command so it's easy to call from anywhere
-    cat > "${BIN_DIR}/wg-reset" <<EOF
+    # Step 2: Try to upgrade from GitHub (newer version may be available)
+    local tmp
+    tmp="$(mktemp)"
+    if curl -sf --max-time 30 -o "${tmp}" "${GITHUB_RAW}/reset.sh" \
+        && [[ -s "${tmp}" ]] \
+        && head -1 "${tmp}" | grep -q '^#!'; then
+        mv "${tmp}" "${dest}"
+        chmod 700 "${dest}"
+        print_success "Reset script updated from GitHub."
+        log_success "reset.sh updated from GitHub."
+    else
+        rm -f "${tmp}"
+        log_info "Using embedded reset.sh (GitHub version not available)."
+    fi
+
+    # Step 3: Install wg-reset command in /usr/local/bin
+    cat > "${BIN_DIR}/wg-reset" <<'WGRESET'
 #!/usr/bin/env bash
 # WireGuard Manager — Reset shortcut
-exec bash "${dest}" "\$@"
-EOF
+RESET_SCRIPT="/opt/wireguard/reset.sh"
+[[ "$EUID" -ne 0 ]] && { echo "Run as root: sudo wg-reset"; exit 1; }
+if [[ ! -f "${RESET_SCRIPT}" ]]; then
+    echo "reset.sh not found. Downloading..."
+    curl -fsSL https://raw.githubusercontent.com/zedofficial/wireguard-manager/main/reset.sh \
+        -o "${RESET_SCRIPT}" && chmod 700 "${RESET_SCRIPT}" || { echo "Download failed."; exit 1; }
+fi
+exec bash "${RESET_SCRIPT}" "$@"
+WGRESET
     chmod +x "${BIN_DIR}/wg-reset"
 
-    print_success "Reset script ready. Run anytime with: sudo wg-reset"
-    log_success "reset.sh installed at ${dest} | wg-reset command added."
+    print_success "wg-reset command installed. Run anytime with: sudo wg-reset"
+    log_success "reset.sh ready at ${dest} | wg-reset installed."
 }
 
 # =============================================================================
