@@ -3,7 +3,9 @@
 # reset.sh — WireGuard Manager Clean Reset
 # Removes everything the installer created so you can run install.sh fresh.
 # =============================================================================
-set -euo pipefail
+# Note: intentionally NOT using set -e here — we want to keep going even if
+# individual removal steps fail (e.g. package already removed, file missing).
+set -uo pipefail
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'
 YELLOW='\033[1;33m'; BOLD='\033[1m'; RESET='\033[0m'
