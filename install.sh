@@ -66,8 +66,8 @@ print_header() {
     clear
     echo -e "${CYAN}${BOLD}"
     echo "  ╔══════════════════════════════════════════════════╗"
-    echo "  ║             WireGuard Manager  v${WGM_VERSION}             ║"
-    echo "  ║                 by ZED Official                  ║"
+    echo "  ║          WireGuard Manager  v${WGM_VERSION}             ║"
+    echo "  ║         	       by ZED Official                 ║"
     echo "  ╚══════════════════════════════════════════════════╝"
     echo -e "${RESET}"
 }
@@ -1235,18 +1235,24 @@ setup_dashboard() {
     print_step "Installing PHP Dashboard"
 
     # ---- Install Apache + PHP ----
+    # Install the 'php' meta-package — on Debian/Ubuntu this always resolves
+    # to the latest PHP version available in the distro's repos automatically.
     print_info "Installing Apache + PHP..."
-    local php_pkg="php8.2 libapache2-mod-php8.2 php8.2-cli"
-    (DEBIAN_FRONTEND=noninteractive apt-get install -y -qq apache2 ${php_pkg} > /dev/null 2>&1) &
-    spinner $! "Installing Apache + PHP 8.2..."
 
-    # Fallback to whatever PHP version is available if 8.2 not in repos
-    if ! command -v php &>/dev/null; then
-        print_warn "PHP 8.2 not available, trying default php package..."
-        (DEBIAN_FRONTEND=noninteractive apt-get install -y -qq apache2 php libapache2-mod-php > /dev/null 2>&1) &
-        spinner $! "Installing Apache + PHP (fallback)..."
+    (DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+        apache2 php libapache2-mod-php php-cli > /dev/null 2>&1) &
+    spinner $! "Installing Apache + PHP..."
+
+    if command -v php &>/dev/null; then
+        local php_version
+        php_version="$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;' 2>/dev/null || echo 'unknown')"
+        print_success "Apache and PHP ${php_version} installed."
+        log_success "PHP version installed: ${php_version}"
+    else
+        print_error "Could not install PHP. Dashboard will not work."
+        print_warn "Try manually: sudo apt install php libapache2-mod-php"
+        log_error "PHP installation failed."
     fi
-    print_success "Apache and PHP installed."
 
     DASHBOARD_DIR="/var/www/html/wireguard-manager"
     mkdir -p "${DASHBOARD_DIR}"
