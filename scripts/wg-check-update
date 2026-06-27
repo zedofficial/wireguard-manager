@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# =============================================================================
+# wg-check-update
+# WireGuard Manager — Automatic Update Checker
+#
+# Designed to run from cron (non-interactive). Does one of two things
+# depending on /opt/wireguard/config.env AUTO_UPDATE setting:
+#
+#   AUTO_UPDATE=false  — checks version, writes status JSON, notifies dashboard
+#   AUTO_UPDATE=true   — checks version, applies update automatically if newer
+#
+# Output:
+#   /opt/wireguard/update_status.json  — read by the dashboard on every load
+#   /var/log/wireguard-manager/update.log  — all activity logged here
+#
+# Cron entry (added by installer):
+#   0 1 * * * root /usr/local/bin/wg-check-update
+# =============================================================================
+set -euo pipefail
+
+# ---- Paths ----
+WGM_DIR="/opt/wireguard"
+VERSION_FILE="${WGM_DIR}/version"
+STATUS_FILE="${WGM_DIR}/update_status.json"
+CONFIG_ENV="${WGM_DIR}/config.env"
+LOG_FILE="/var/log/wireguard-manager/update.log"
+
+# ---- Load config ----
+source "${CONFIG_ENV}" 2>/dev/null || true
+
+# GitHub config — must match wg-update and install.sh
+GITHUB_USER="${GITHUB_USER:-zedofficial}"
+GITHUB_REPO="${GITHUB_REPO:-wireguard-manager}"
+GITHUB_BRANCH="${GITHUB_BRANCH:-main}"
+GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/${GITHUB_BRANCH}"
+
+AUTO_UPDATE="${AUTO_UPDATE:-false}"
+
+# ---- Logging ----
+log() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [CHECK-UPDATE] $*" >> "${LOG_FILE}"
+}
+
+# ---- Write status JSON ----
+write_status() {
+    local status="$1"       # available | up_to_date | error
+    local current="$2"
+    local latest="$3"
+    local message="$4"
+    local checked
+    checked="$(date '+%Y-%m-%d %H:%M:%S')"
+
+    cat > "${STATUS_FILE}" <<JSON
+{
+    "status": "${status}",
+    "current_version": "${current}",
+    "latest_version": "${latest}",
+    "message": "${message}",
+    "checked_at": "${checked}",
+    "auto_update": ${AUTO_UPDATE}
+}
+JSON
+    chmod 644 "${STATUS_FILE}"
+}
+
+# ---- Get installed version ----
+CURRENT_VERSION="$(cat "${VERSION_FILE}" 2>/dev/null | tr -d '[:space:]' || echo 'unknown')"
+
+log "Checking for updates. Installed: ${CURRENT_VERSION}"
+
+# ---- Fetch latest version from GitHub ----
+LATEST_VERSION="$(curl -sf --max-time 10 "${GITHUB_RAW}/version" 2>/dev/null | tr -d '[:space:]' || echo '')"
+
+if [[ -z "${LATEST_VERSION}" ]]; then
+    log "ERROR: Could not reach GitHub to check version."
+    write_status "error" "${CURRENT_VERSION}" "" "Could not reach GitHub. Check internet connection."
+    exit 1
+fi
+
+log "Latest version on GitHub: ${LATEST_VERSION}"
+
+# ---- Compare ----
+if [[ "${CURRENT_VERSION}" == "${LATEST_VERSION}" ]]; then
+    log "Already up to date: ${CURRENT_VERSION}"
+    write_status "up_to_date" "${CURRENT_VERSION}" "${LATEST_VERSION}" "WireGuard Manager is up to date."
+    exit 0
+fi
+
+# ---- Update is available ----
+log "Update available: ${CURRENT_VERSION} → ${LATEST_VERSION}"
+
+if [[ "${AUTO_UPDATE}" == "true" ]]; then
+    # ---- Auto-update mode: apply it now ----
+    log "Auto-update enabled — applying update..."
+
+    write_status "updating" "${CURRENT_VERSION}" "${LATEST_VERSION}" \
+        "Auto-update in progress: ${CURRENT_VERSION} → ${LATEST_VERSION}"
+
+    # Run wg-update non-interactively using --force and --yes flags
+    if bash /usr/local/bin/wg-update --force --yes >> "${LOG_FILE}" 2>&1; then
+        NEW_VERSION="$(cat "${VERSION_FILE}" 2>/dev/null | tr -d '[:space:]' || echo "${LATEST_VERSION}")"
+        log "Auto-update complete: ${CURRENT_VERSION} → ${NEW_VERSION}"
+        write_status "up_to_date" "${NEW_VERSION}" "${LATEST_VERSION}" \
+            "Auto-updated successfully from ${CURRENT_VERSION} to ${NEW_VERSION} at $(date '+%H:%M')."
+    else
+        log "ERROR: Auto-update failed. Will retry at next scheduled check."
+        write_status "error" "${CURRENT_VERSION}" "${LATEST_VERSION}" \
+            "Auto-update failed. Update manually from the dashboard."
+    fi
+
+else
+    # ---- Notify-only mode: just flag it for the dashboard ----
+    write_status "available" "${CURRENT_VERSION}" "${LATEST_VERSION}" \
+        "Update available: ${CURRENT_VERSION} → ${LATEST_VERSION}"
+    log "Status written. Dashboard will show update banner."
+fi
+
+exit 0

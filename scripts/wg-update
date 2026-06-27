@@ -1,0 +1,264 @@
+#!/usr/bin/env bash
+# =============================================================================
+# wg-update
+# WireGuard Manager — Self-updater
+#
+# Pulls the latest release from GitHub and updates:
+#   - All client management commands (/usr/local/bin/wg-*)
+#   - The PHP dashboard (/var/www/html/wireguard-manager/)
+#   - The DDNS update script logic (preserves credentials)
+#   - The backup script
+#
+# NEVER touches:
+#   - /etc/wireguard/wg0.conf
+#   - /etc/wireguard/server_private.key
+#   - /etc/wireguard/*.key
+#   - /etc/wireguard/clients/       (all client configs and keys)
+#   - /opt/wireguard/clients.db     (client database)
+#   - /opt/wireguard/config.env     (server settings)
+#   - /opt/wireguard/dashboard.passwd
+#   - /opt/wireguard/ddns/update.sh (credentials preserved)
+#   - /opt/wireguard/backups/
+#
+# Usage:
+#   wg-update              — check and apply updates
+#   wg-update --check      — check version only, don't update
+#   wg-update --force      — update even if already on latest version
+# =============================================================================
+set -euo pipefail
+
+# ---- Configuration ----
+# Change this to your actual GitHub repo before distributing
+GITHUB_USER="zedofficial"
+GITHUB_REPO="wireguard-manager"
+GITHUB_BRANCH="main"
+GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/${GITHUB_BRANCH}"
+GITHUB_API="https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}"
+
+WGM_DIR="/opt/wireguard"
+BIN_DIR="/usr/local/bin"
+DASHBOARD_DIR="/var/www/html/wireguard-manager"
+WGM_LOG_DIR="/var/log/wireguard-manager"
+VERSION_FILE="${WGM_DIR}/version"
+BACKUP_DIR="${WGM_DIR}/backups/pre-update"
+
+RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'
+YELLOW='\033[1;33m'; BOLD='\033[1m'; RESET='\033[0m'
+
+# ---- Parse flags ----
+CHECK_ONLY=false
+FORCE_UPDATE=false
+YES_MODE=false     # --yes skips the confirmation prompt (used by auto-update cron)
+for arg in "$@"; do
+    case "${arg}" in
+        --check) CHECK_ONLY=true ;;
+        --force) FORCE_UPDATE=true ;;
+        --yes)   YES_MODE=true ;;
+    esac
+done
+
+# ---- Root check ----
+[[ "$EUID" -ne 0 ]] && { echo -e "${RED}  Run as root.${RESET}"; exit 1; }
+
+# ---- Logging ----
+log() { echo "$(date '+%Y-%m-%d %H:%M:%S') [UPDATE] $*" >> "${WGM_LOG_DIR}/update.log" 2>/dev/null || true; }
+
+echo -e "\n${CYAN}${BOLD}  WireGuard Manager — Updater${RESET}\n"
+
+# ---- Get current installed version ----
+if [[ -f "${VERSION_FILE}" ]]; then
+    CURRENT_VERSION="$(cat "${VERSION_FILE}" | tr -d '[:space:]')"
+else
+    CURRENT_VERSION="unknown"
+fi
+echo -e "  Installed version : ${CYAN}${CURRENT_VERSION}${RESET}"
+
+# ---- Fetch latest version from GitHub ----
+echo -e "  Checking GitHub for updates..."
+
+LATEST_VERSION="$(curl -sf --max-time 10 "${GITHUB_RAW}/version" 2>/dev/null | tr -d '[:space:]' || echo '')"
+
+if [[ -z "${LATEST_VERSION}" ]]; then
+    echo -e "${RED}  Could not reach GitHub. Check your internet connection.${RESET}"
+    echo -e "  URL: ${GITHUB_RAW}/version"
+    exit 1
+fi
+
+echo -e "  Latest version    : ${CYAN}${LATEST_VERSION}${RESET}"
+
+# ---- Compare versions ----
+if [[ "${CURRENT_VERSION}" == "${LATEST_VERSION}" && "${FORCE_UPDATE}" == false ]]; then
+    echo -e "\n${GREEN}  You are up to date. (${CURRENT_VERSION})${RESET}\n"
+    log "Already up to date: ${CURRENT_VERSION}"
+    exit 0
+fi
+
+if [[ "${CHECK_ONLY}" == true ]]; then
+    if [[ "${CURRENT_VERSION}" != "${LATEST_VERSION}" ]]; then
+        echo -e "\n${YELLOW}  Update available: ${CURRENT_VERSION} → ${LATEST_VERSION}${RESET}"
+        echo -e "  Run ${CYAN}wg-update${RESET} to apply.\n"
+    fi
+    exit 0
+fi
+
+# ---- Confirm update ----
+echo ""
+if [[ "${FORCE_UPDATE}" == true && "${CURRENT_VERSION}" == "${LATEST_VERSION}" ]]; then
+    echo -e "  ${YELLOW}Forcing reinstall of version ${LATEST_VERSION}${RESET}"
+else
+    echo -e "  ${YELLOW}Update available: ${CURRENT_VERSION} → ${LATEST_VERSION}${RESET}"
+fi
+
+# Skip prompt when called non-interactively (e.g. from auto-update cron)
+if [[ "${YES_MODE}" == false ]]; then
+    read -rp "  Apply update now? [Y/n]: " confirm
+    [[ "${confirm}" =~ ^[Nn]$ ]] && { echo "  Update cancelled."; exit 0; }
+else
+    echo -e "  ${CYAN}Running non-interactively (--yes). Applying update...${RESET}"
+fi
+
+log "Starting update: ${CURRENT_VERSION} → ${LATEST_VERSION}"
+
+# ---- Pre-update backup ----
+echo ""
+echo -e "  ${CYAN}Creating pre-update backup...${RESET}"
+mkdir -p "${BACKUP_DIR}"
+BACKUP_FILE="${BACKUP_DIR}/pre_update_$(date '+%Y%m%d_%H%M%S').tar.gz"
+tar -czf "${BACKUP_FILE}" \
+    "${BIN_DIR}"/wg-* \
+    "${WGM_DIR}/version" \
+    2>/dev/null || true
+
+if [[ -d "${DASHBOARD_DIR}" ]]; then
+    tar -czf "${BACKUP_DIR}/dashboard_$(date '+%Y%m%d_%H%M%S').tar.gz" \
+        "${DASHBOARD_DIR}/" 2>/dev/null || true
+fi
+
+echo -e "  ${GREEN}✔ Backup saved: ${BACKUP_FILE}${RESET}"
+log "Pre-update backup: ${BACKUP_FILE}"
+
+# ---- Helper: download a file from GitHub ----
+download_file() {
+    local remote_path="$1"    # path in the repo, e.g. "scripts/wg-add-client"
+    local dest_path="$2"      # local destination path
+    local url="${GITHUB_RAW}/${remote_path}"
+
+    if curl -sf --max-time 30 -o "${dest_path}" "${url}"; then
+        return 0
+    else
+        echo -e "${RED}  Failed to download: ${url}${RESET}"
+        return 1
+    fi
+}
+
+# ---- Update client management scripts ----
+echo ""
+echo -e "  ${CYAN}Updating client management scripts...${RESET}"
+
+SCRIPTS=(
+    "wg-add-client"
+    "wg-delete-client"
+    "wg-show-client"
+    "wg-list-clients"
+    "wg-disable-client"
+    "wg-enable-client"
+    "wg-rename-client"
+    "wg-export-client"
+    "wg-import-client"
+    "wg-regen-qr"
+    "wg-update"
+    "wg-dashboard-passwd"
+    "wg-check-update"
+)
+
+UPDATED_SCRIPTS=0
+FAILED_SCRIPTS=0
+
+for script in "${SCRIPTS[@]}"; do
+    # Scripts live in the repo under scripts/ directory
+    TEMP_FILE="$(mktemp)"
+    if download_file "scripts/${script}" "${TEMP_FILE}"; then
+        # Only replace if the downloaded file looks valid (not empty, has shebang)
+        if [[ -s "${TEMP_FILE}" ]] && head -1 "${TEMP_FILE}" | grep -q '^#!'; then
+            mv "${TEMP_FILE}" "${BIN_DIR}/${script}"
+            chmod +x "${BIN_DIR}/${script}"
+            echo -e "  ${GREEN}✔${RESET} ${script}"
+            (( UPDATED_SCRIPTS++ ))
+        else
+            echo -e "  ${YELLOW}⚠ ${script} — downloaded file invalid, skipping.${RESET}"
+            rm -f "${TEMP_FILE}"
+            (( FAILED_SCRIPTS++ ))
+        fi
+    else
+        echo -e "  ${YELLOW}⚠ ${script} — not found in this release, skipping.${RESET}"
+        rm -f "${TEMP_FILE}"
+    fi
+done
+
+# ---- Update dashboard (if installed) ----
+if [[ -d "${DASHBOARD_DIR}" ]]; then
+    echo ""
+    echo -e "  ${CYAN}Updating PHP dashboard...${RESET}"
+
+    DASHBOARD_FILES=(
+        "dashboard/index.php"
+        "dashboard/login.php"
+        "dashboard/logout.php"
+        "dashboard/action.php"
+        "dashboard/clients.php"
+        "dashboard/config.php"
+        "dashboard/logs.php"
+    )
+
+    for f in "${DASHBOARD_FILES[@]}"; do
+        filename="$(basename "${f}")"
+        TEMP_FILE="$(mktemp)"
+        if download_file "${f}" "${TEMP_FILE}"; then
+            if [[ -s "${TEMP_FILE}" ]]; then
+                mv "${TEMP_FILE}" "${DASHBOARD_DIR}/${filename}"
+                echo -e "  ${GREEN}✔${RESET} dashboard/${filename}"
+            else
+                rm -f "${TEMP_FILE}"
+            fi
+        else
+            rm -f "${TEMP_FILE}"
+        fi
+    done
+
+    # Reload Apache to pick up PHP changes (no downtime)
+    systemctl reload apache2 2>/dev/null || true
+    echo -e "  ${GREEN}✔ Apache reloaded.${RESET}"
+else
+    echo -e "  ${YELLOW}  Dashboard not installed — skipping dashboard update.${RESET}"
+fi
+
+# ---- Update backup script ----
+if [[ -f "${WGM_DIR}/backup.sh" ]]; then
+    echo ""
+    echo -e "  ${CYAN}Updating backup script...${RESET}"
+    TEMP_FILE="$(mktemp)"
+    if download_file "scripts/backup.sh" "${TEMP_FILE}" && [[ -s "${TEMP_FILE}" ]]; then
+        mv "${TEMP_FILE}" "${WGM_DIR}/backup.sh"
+        chmod 700 "${WGM_DIR}/backup.sh"
+        echo -e "  ${GREEN}✔ backup.sh updated.${RESET}"
+    else
+        rm -f "${TEMP_FILE}"
+        echo -e "  ${YELLOW}  backup.sh not updated (not found in release).${RESET}"
+    fi
+fi
+
+# ---- Write new version ----
+echo "${LATEST_VERSION}" > "${VERSION_FILE}"
+
+# ---- Done ----
+echo ""
+echo -e "${GREEN}${BOLD}  Update complete!${RESET}"
+echo -e "  Version   : ${CYAN}${CURRENT_VERSION} → ${LATEST_VERSION}${RESET}"
+echo -e "  Scripts   : ${UPDATED_SCRIPTS} updated"
+[[ "${FAILED_SCRIPTS}" -gt 0 ]] && echo -e "  ${YELLOW}Skipped   : ${FAILED_SCRIPTS} (not critical)${RESET}"
+echo -e "  Backup    : ${BACKUP_FILE}"
+echo ""
+echo -e "  ${YELLOW}WireGuard is still running — no restart needed.${RESET}"
+echo -e "  Clients remain connected.\n"
+
+log "Update complete: ${CURRENT_VERSION} → ${LATEST_VERSION} | Scripts updated: ${UPDATED_SCRIPTS}"

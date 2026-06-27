@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# =============================================================================
+# wg-list-clients
+# WireGuard Manager — List all registered VPN clients
+#
+# Shows a table of all clients with:
+#   - Name
+#   - VPN IP
+#   - Online/offline/disabled status (from live WireGuard handshake data)
+#   - Creation date
+#   - Last handshake time
+#
+# Usage:
+#   wg-list-clients
+#   wg-list-clients --json     (machine-readable output)
+# =============================================================================
+set -euo pipefail
+
+source /opt/wireguard/config.env
+
+RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'
+YELLOW='\033[1;33m'; BOLD='\033[1m'; RESET='\033[0m'
+
+# ---- Root check ----
+[[ "$EUID" -ne 0 ]] && { echo -e "${RED}  Run as root.${RESET}"; exit 1; }
+
+# ---- Parse flags ----
+JSON_MODE=false
+for arg in "$@"; do
+    [[ "${arg}" == "--json" ]] && JSON_MODE=true
+done
+
+# ---- Check database exists and has clients ----
+if [[ ! -f "${WGM_DB}" ]] || ! grep -qv '^#' "${WGM_DB}" 2>/dev/null; then
+    if [[ "${JSON_MODE}" == true ]]; then
+        echo "[]"
+    else
+        echo -e "\n  ${YELLOW}No clients registered yet.${RESET}"
+        echo -e "  Add your first client: ${CYAN}wg-add-client <name>${RESET}\n"
+    fi
+    exit 0
+fi
+
+# ---- Load live handshakes from WireGuard ----
+declare -A HANDSHAKES
+declare -A TRANSFERS_RX
+declare -A TRANSFERS_TX
+
+if wg show wg0 &>/dev/null; then
+    while IFS=$'\t' read -r pubkey ts; do
+        HANDSHAKES["${pubkey}"]="${ts}"
+    done < <(wg show wg0 latest-handshakes 2>/dev/null || true)
+
+    while IFS=$'\t' read -r pubkey rx tx; do
+        TRANSFERS_RX["${pubkey}"]="${rx}"
+        TRANSFERS_TX["${pubkey}"]="${tx}"
+    done < <(wg show wg0 transfer 2>/dev/null || true)
+    WG_RUNNING=true
+else
+    WG_RUNNING=false
+fi
+
+# ---- JSON output mode ----
+if [[ "${JSON_MODE}" == true ]]; then
+    echo "["
+    first=true
+    while IFS='|' read -r name ip pubkey created status; do
+        [[ "${name}" == \#* || -z "${name}" ]] && continue
+
+        hs="${HANDSHAKES[${pubkey}]:-0}"
+        [[ "${hs}" == "0" ]] && hs_human="never" || hs_human="$(date -d "@${hs}" 2>/dev/null || echo 'unknown')"
+
+        [[ "${first}" == false ]] && echo ","
+        first=false
+        printf '  {"name":"%s","ip":"%s","status":"%s","created":"%s","last_handshake":"%s"}' \
+            "${name}" "${ip}" "${status}" "${created}" "${hs_human}"
+    done < "${WGM_DB}"
+    echo ""
+    echo "]"
+    exit 0
+fi
+
+# ---- Human-readable table ----
+echo ""
+echo -e "${CYAN}${BOLD}  WireGuard Manager — Client List${RESET}"
+echo -e "  Server: ${SERVER_ENDPOINT}:${WG_PORT}  |  Subnet: ${VPN_SUBNET}"
+[[ "${WG_RUNNING}" == false ]] && echo -e "  ${YELLOW}⚠ WireGuard not running — showing last known status${RESET}"
+echo ""
+printf "  ${BOLD}%-20s %-15s %-12s %-22s %-20s${RESET}\n" \
+    "NAME" "VPN IP" "STATUS" "LAST HANDSHAKE" "CREATED"
+echo -e "  ────────────────────────────────────────────────────────────────────────────────"
+
+TOTAL=0
+ACTIVE=0
+DISABLED=0
+
+while IFS='|' read -r name ip pubkey created status; do
+    [[ "${name}" == \#* || -z "${name}" ]] && continue
+    (( TOTAL++ ))
+
+    # Determine connection status
+    hs="${HANDSHAKES[${pubkey}]:-0}"
+
+    if [[ "${status}" == "disabled" ]]; then
+        status_label="${RED}✖ disabled${RESET}"
+        hs_human="—"
+        (( DISABLED++ ))
+    elif [[ "${hs}" != "0" && -n "${hs}" ]]; then
+        # Consider "online" if handshake within last 3 minutes (180s)
+        now="$(date +%s)"
+        age=$(( now - hs ))
+        if (( age < 180 )); then
+            status_label="${GREEN}● online${RESET}"
+        else
+            status_label="${YELLOW}○ offline${RESET}"
+        fi
+        hs_human="$(date -d "@${hs}" '+%Y-%m-%d %H:%M' 2>/dev/null \
+                 || date -r "${hs}"  '+%Y-%m-%d %H:%M' 2>/dev/null \
+                 || echo 'unknown')"
+        (( ACTIVE++ ))
+    else
+        status_label="${YELLOW}○ offline${RESET}"
+        hs_human="never"
+    fi
+
+    # Print row — status uses echo -en for color codes, rest uses printf
+    printf "  %-20s %-15s " "${name}" "${ip}"
+    echo -en "${status_label}"
+    printf "  %-22s %-20s\n" "${hs_human}" "${created}"
+
+done < "${WGM_DB}"
+
+echo -e "  ────────────────────────────────────────────────────────────────────────────────"
+echo -e "  Total: ${TOTAL}  |  ${GREEN}Active: ${ACTIVE}${RESET}  |  ${RED}Disabled: ${DISABLED}${RESET}"
+echo ""
+echo -e "  Commands:"
+echo -e "  ${CYAN}wg-add-client <name>${RESET}       — Add a new client"
+echo -e "  ${CYAN}wg-show-client <name>${RESET}      — Show config + QR"
+echo -e "  ${CYAN}wg-disable-client <name>${RESET}   — Temporarily block a client"
+echo -e "  ${CYAN}wg-delete-client <name>${RESET}    — Permanently remove a client"
+echo ""

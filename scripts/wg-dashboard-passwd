@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# =============================================================================
+# wg-dashboard-passwd
+# WireGuard Manager — Change the web dashboard password
+#
+# Prompts for a new password, hashes it with bcrypt via PHP,
+# and writes it to /opt/wireguard/dashboard.passwd.
+#
+# Usage:
+#   sudo wg-dashboard-passwd
+# =============================================================================
+set -euo pipefail
+
+RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'
+YELLOW='\033[1;33m'; BOLD='\033[1m'; RESET='\033[0m'
+
+PASSWD_FILE="/opt/wireguard/dashboard.passwd"
+
+# ---- Root check ----
+[[ "$EUID" -ne 0 ]] && { echo -e "${RED}  Run as root: sudo wg-dashboard-passwd${RESET}"; exit 1; }
+
+# ---- Check PHP is available ----
+if ! command -v php &>/dev/null; then
+    echo -e "${RED}  PHP is not installed. The dashboard requires PHP to hash passwords.${RESET}"
+    exit 1
+fi
+
+echo ""
+echo -e "${CYAN}${BOLD}  WireGuard Manager — Dashboard Password${RESET}"
+echo -e "  ─────────────────────────────────────────"
+echo ""
+
+# ---- Prompt for new password ----
+read -rsp "  New password     : " p1; echo ""
+read -rsp "  Confirm password : " p2; echo ""
+
+if [[ -z "${p1}" ]]; then
+    echo -e "\n${RED}  Password cannot be empty.${RESET}\n"
+    exit 1
+fi
+
+if [[ "${p1}" != "${p2}" ]]; then
+    echo -e "\n${RED}  Passwords do not match.${RESET}\n"
+    exit 1
+fi
+
+if [[ "${#p1}" -lt 6 ]]; then
+    echo -e "\n${YELLOW}  Warning: Password is very short (less than 6 characters).${RESET}"
+    read -rp "  Continue anyway? [y/N]: " confirm
+    [[ ! "${confirm}" =~ ^[Yy]$ ]] && { echo "  Cancelled."; exit 0; }
+fi
+
+# ---- Hash with bcrypt via PHP ----
+HASH="$(php -r "echo password_hash('${p1//\'/\'\\\'\'}', PASSWORD_DEFAULT);")"
+
+if [[ -z "${HASH}" ]]; then
+    echo -e "\n${RED}  Failed to generate password hash.${RESET}\n"
+    exit 1
+fi
+
+# ---- Write to file ----
+echo "${HASH}" > "${PASSWD_FILE}"
+chmod 640 "${PASSWD_FILE}"
+
+echo ""
+echo -e "${GREEN}  ✔ Dashboard password updated.${RESET}"
+echo -e "  The new password takes effect immediately."
+echo -e "  No service restart needed.\n"

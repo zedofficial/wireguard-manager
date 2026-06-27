@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# =============================================================================
+# wg-rename-client
+# WireGuard Manager — Rename a client (updates DB, files, wg0.conf comment)
+# Keys and IP are preserved — the client does NOT need to reconnect.
+# =============================================================================
+set -euo pipefail
+
+source /opt/wireguard/config.env
+
+RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'
+YELLOW='\033[1;33m'; BOLD='\033[1m'; RESET='\033[0m'
+
+# ---- Root check ----
+[[ "$EUID" -ne 0 ]] && { echo -e "${RED}  Run as root.${RESET}"; exit 1; }
+
+# ---- Get old name ----
+OLD_NAME="${1:-}"
+if [[ -z "${OLD_NAME}" ]]; then
+    read -rp "  Current client name: " OLD_NAME
+fi
+
+# ---- Get new name ----
+NEW_NAME="${2:-}"
+if [[ -z "${NEW_NAME}" ]]; then
+    read -rp "  New client name: " NEW_NAME
+fi
+
+# ---- Sanitize new name ----
+NEW_NAME="${NEW_NAME// /-}"
+NEW_NAME="${NEW_NAME//[^a-zA-Z0-9_-]/}"
+
+if [[ -z "${NEW_NAME}" ]]; then
+    echo -e "${RED}  Invalid name. Use letters, numbers, hyphens, underscores only.${RESET}"
+    exit 1
+fi
+
+# ---- Verify old client exists ----
+if ! grep -q "^${OLD_NAME}|" "${WGM_DB}" 2>/dev/null; then
+    echo -e "${RED}  Client '${OLD_NAME}' not found.${RESET}"
+    echo -e "  Run ${CYAN}wg-list-clients${RESET} to see all clients."
+    exit 1
+fi
+
+# ---- Check new name not already taken ----
+if grep -q "^${NEW_NAME}|" "${WGM_DB}" 2>/dev/null; then
+    echo -e "${RED}  A client named '${NEW_NAME}' already exists.${RESET}"
+    exit 1
+fi
+
+if [[ "${OLD_NAME}" == "${NEW_NAME}" ]]; then
+    echo -e "${YELLOW}  Old and new names are the same. Nothing to do.${RESET}"
+    exit 0
+fi
+
+echo -e "${CYAN}  Renaming '${OLD_NAME}' → '${NEW_NAME}'...${RESET}"
+
+# ---- Rename client directory and files ----
+OLD_DIR="${WGM_CLIENTS_DIR}/${OLD_NAME}"
+NEW_DIR="${WGM_CLIENTS_DIR}/${NEW_NAME}"
+
+if [[ -d "${OLD_DIR}" ]]; then
+    mv "${OLD_DIR}" "${NEW_DIR}"
+
+    # Rename the .conf file inside the directory
+    if [[ -f "${NEW_DIR}/${OLD_NAME}.conf" ]]; then
+        mv "${NEW_DIR}/${OLD_NAME}.conf" "${NEW_DIR}/${NEW_NAME}.conf"
+    fi
+
+    # Update the client name comment inside the .conf file
+    if [[ -f "${NEW_DIR}/${NEW_NAME}.conf" ]]; then
+        sed -i "s/# WireGuard Client Config — ${OLD_NAME}/# WireGuard Client Config — ${NEW_NAME}/" \
+            "${NEW_DIR}/${NEW_NAME}.conf"
+    fi
+
+    echo -e "  ${GREEN}✔${RESET} Client directory renamed."
+else
+    echo -e "${YELLOW}  Warning: Client directory not found at ${OLD_DIR}. Skipping file rename.${RESET}"
+fi
+
+# ---- Update comment label in wg0.conf (keys/IPs untouched) ----
+python3 - "${WG_CONF}" "${OLD_NAME}" "${NEW_NAME}" <<'PYEOF'
+import sys, re
+
+conf_path = sys.argv[1]
+old_name  = sys.argv[2]
+new_name  = sys.argv[3]
+
+with open(conf_path, 'r') as f:
+    content = f.read()
+
+# Only rename the comment header — the actual peer block keys are unchanged
+old_label = f'# --- Client: {old_name} ---'
+new_label = f'# --- Client: {new_name} ---'
+new_content = content.replace(old_label, new_label)
+
+with open(conf_path, 'w') as f:
+    f.write(new_content)
+
+print(f"  Updated wg0.conf label: '{old_name}' → '{new_name}'")
+PYEOF
+
+# ---- Update database ----
+python3 - "${WGM_DB}" "${OLD_NAME}" "${NEW_NAME}" <<'PYEOF'
+import sys
+
+db_path  = sys.argv[1]
+old_name = sys.argv[2]
+new_name = sys.argv[3]
+
+lines = []
+with open(db_path, 'r') as f:
+    for line in f:
+        stripped = line.rstrip('\n')
+        if stripped.startswith(old_name + '|'):
+            parts = stripped.split('|')
+            parts[0] = new_name
+            lines.append('|'.join(parts))
+        else:
+            lines.append(stripped)
+
+with open(db_path, 'w') as f:
+    f.write('\n'.join(lines) + '\n')
+
+print(f"  Database updated: '{old_name}' → '{new_name}'")
+PYEOF
+
+echo -e "${GREEN}  Client successfully renamed to '${NEW_NAME}'.${RESET}"
+echo -e "  The client's VPN IP, keys, and connection are unchanged."
+echo -e "  Config file: ${CYAN}${WGM_CLIENTS_DIR}/${NEW_NAME}/${NEW_NAME}.conf${RESET}"
