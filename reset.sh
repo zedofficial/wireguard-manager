@@ -36,31 +36,26 @@ if command -v docker &>/dev/null; then
     echo -e "${GREEN}  ✔ Uptime Kuma removed.${RESET}"
 
     echo -e "${CYAN}  Removing Docker...${RESET}"
-    # Stop Docker cleanly first — this tears down veth interfaces
-    systemctl stop docker       2>/dev/null || true
+    systemctl stop docker        2>/dev/null || true
     systemctl stop docker.socket 2>/dev/null || true
-    systemctl disable docker    2>/dev/null || true
+    systemctl disable docker     2>/dev/null || true
 
-    # Explicitly bring down and delete docker0 bridge
-    ip link set docker0 down    2>/dev/null || true
-    ip link delete docker0      2>/dev/null || true
-
-    # Remove any lingering veth interfaces
-    ip link show 2>/dev/null | grep -o 'veth[^ @]*' | while read -r veth; do
-        ip link delete "${veth}" 2>/dev/null || true
+    # Bring down docker0 bridge and veth interfaces
+    ip link set docker0 down 2>/dev/null || true
+    ip link delete docker0   2>/dev/null || true
+    ip link show 2>/dev/null | grep -o 'veth[^ @]*' | while read -r v; do
+        ip link delete "${v}" 2>/dev/null || true
     done
 
-    # Remove Docker packages
-    apt-get remove -y docker-ce docker-ce-cli containerd.io \
-        docker-buildx-plugin docker-compose-plugin 2>/dev/null || true
-    apt-get remove -y docker docker.io docker-compose docker-doc \
-        podman-docker 2>/dev/null || true
-    apt-get autoremove -y 2>/dev/null || true
+    # Remove Docker packages non-interactively with timeout
+    DEBIAN_FRONTEND=noninteractive apt-get remove -y -q \
+        docker-ce docker-ce-cli containerd.io \
+        docker-buildx-plugin docker-compose-plugin \
+        docker docker.io docker-compose 2>/dev/null || true
+    DEBIAN_FRONTEND=noninteractive apt-get autoremove -y -q 2>/dev/null || true
 
-    # Remove Docker data directories
-    rm -rf /var/lib/docker
-    rm -rf /var/lib/containerd
-    rm -rf /etc/docker
+    # Remove Docker data
+    rm -rf /var/lib/docker /var/lib/containerd /etc/docker
     rm -f  /etc/apt/sources.list.d/docker.list
     rm -f  /etc/apt/keyrings/docker.gpg
     rm -f  /etc/apt/keyrings/docker.asc
@@ -72,8 +67,8 @@ fi
 
 # ---- Remove WireGuard packages ----
 echo -e "${CYAN}  Removing WireGuard packages...${RESET}"
-apt-get remove -y wireguard wireguard-tools 2>/dev/null || true
-apt-get autoremove -y 2>/dev/null || true
+DEBIAN_FRONTEND=noninteractive apt-get remove -y -q wireguard wireguard-tools 2>/dev/null || true
+DEBIAN_FRONTEND=noninteractive apt-get autoremove -y -q 2>/dev/null || true
 echo -e "${GREEN}  ✔ WireGuard packages removed.${RESET}"
 
 # ---- Remove WireGuard config and client data ----
