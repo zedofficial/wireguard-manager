@@ -110,3 +110,7 @@ echo ""
 echo -e "  Run the installer again:"
 echo -e "  ${CYAN}sudo bash install.sh${RESET}"
 echo ""
+
+# ---- Self-delete ----
+SCRIPT_PATH="$(realpath "$0")"
+rm -f "${SCRIPT_PATH}"
