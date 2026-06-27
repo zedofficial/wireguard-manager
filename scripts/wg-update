@@ -169,6 +169,7 @@ SCRIPTS=(
     "wg-update"
     "wg-dashboard-passwd"
     "wg-check-update"
+    "wg-reset"
 )
 
 # Also re-download reset.sh to keep it current

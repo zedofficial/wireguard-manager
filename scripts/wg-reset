@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# =============================================================================
+# wg-reset
+# WireGuard Manager — Reset shortcut command
+# Runs /opt/wireguard/reset.sh
+# If reset.sh is missing, downloads it fresh from GitHub first.
+# =============================================================================
+set -euo pipefail
+
+RED='\033[0;31m'; CYAN='\033[0;36m'; RESET='\033[0m'
+
+[[ "$EUID" -ne 0 ]] && { echo -e "${RED}  Run as root: sudo wg-reset${RESET}"; exit 1; }
+
+RESET_SCRIPT="/opt/wireguard/reset.sh"
+GITHUB_RAW="https://raw.githubusercontent.com/zedofficial/wireguard-manager/main"
+
+# If reset.sh is missing, try to download it
+if [[ ! -f "${RESET_SCRIPT}" ]]; then
+    echo -e "${CYAN}  reset.sh not found locally — downloading from GitHub...${RESET}"
+    curl -fsSL "${GITHUB_RAW}/reset.sh" -o "${RESET_SCRIPT}" 2>/dev/null || {
+        echo -e "${RED}  Could not download reset.sh. Check your internet connection.${RESET}"
+        exit 1
+    }
+    chmod 700 "${RESET_SCRIPT}"
+fi
+
+exec bash "${RESET_SCRIPT}" "$@"

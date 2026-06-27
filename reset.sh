@@ -92,6 +92,7 @@ rm -f /usr/local/bin/wg-regen-qr
 rm -f /usr/local/bin/wg-update
 rm -f /usr/local/bin/wg-check-update
 rm -f /usr/local/bin/wg-dashboard-passwd
+rm -f /usr/local/bin/wg-reset
 echo -e "${GREEN}  ✔ Scripts removed.${RESET}"
 
 # ---- Remove cron jobs ----

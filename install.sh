@@ -1317,10 +1317,30 @@ setup_dashboard() {
 EOF
 
     a2dissite 000-default.conf > /dev/null 2>&1 || true
-    a2ensite wireguard-manager.conf > /dev/null 2>&1
-    a2enmod rewrite > /dev/null 2>&1
-    systemctl enable apache2 > /dev/null 2>&1
-    systemctl restart apache2 > /dev/null 2>&1
+    a2ensite wireguard-manager.conf > /dev/null 2>&1 || true
+    a2enmod rewrite > /dev/null 2>&1 || true
+    systemctl enable apache2 > /dev/null 2>&1 || true
+
+    # Stop first to clear any stale state, then start fresh
+    systemctl stop    apache2 > /dev/null 2>&1 || true
+    systemctl start   apache2 > /dev/null 2>&1 || true
+
+    sleep 1
+
+    # Verify Apache is actually running
+    if systemctl is-active --quiet apache2; then
+        print_success "Apache started and running."
+    else
+        # Try one more time with explicit restart
+        systemctl restart apache2 2>/dev/null || true
+        sleep 1
+        if systemctl is-active --quiet apache2; then
+            print_success "Apache started."
+        else
+            print_error "Apache failed to start. Check: sudo journalctl -u apache2 -n 20"
+            log_error "Apache failed to start after setup."
+        fi
+    fi
 
     # ---- sudo rules so www-data can run wg commands ----
     cat > /etc/sudoers.d/wireguard-manager <<EOF
@@ -1359,21 +1379,113 @@ EOF
 # =============================================================================
 
 install_reset_script() {
-    # Download reset.sh to /opt/wireguard/ so it's always on hand
-    local url="${GITHUB_RAW}/reset.sh"
     local dest="${WGM_DIR}/reset.sh"
+    local url="${GITHUB_RAW}/reset.sh"
     local tmp
     tmp="$(mktemp)"
+    local downloaded=false
 
-    if curl -sf --max-time 30 -o "${tmp}" "${url}" && [[ -s "${tmp}" ]]; then
+    # Try GitHub first
+    if curl -sf --max-time 30 -o "${tmp}" "${url}" \
+        && [[ -s "${tmp}" ]] \
+        && head -1 "${tmp}" | grep -q '^#!'; then
         mv "${tmp}" "${dest}"
-        chmod 700 "${dest}"
-        print_success "reset.sh saved to: ${dest}"
-        log_success "reset.sh downloaded to ${dest}."
+        downloaded=true
     else
         rm -f "${tmp}"
-        log_warn "Could not download reset.sh — run 'wg-update' to fetch it later."
     fi
+
+    # Fallback: embed reset.sh inline so it's always available
+    # even if the repo doesn't have it yet or GitHub is unreachable
+    if [[ "${downloaded}" == false ]]; then
+        log_warn "Could not download reset.sh from GitHub — embedding inline fallback."
+        cat > "${dest}" <<'RESET_EMBED'
+#!/usr/bin/env bash
+# WireGuard Manager — Clean Reset (embedded fallback)
+# For the latest version: https://raw.githubusercontent.com/zedofficial/wireguard-manager/main/reset.sh
+set -euo pipefail
+RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; YELLOW='\033[1;33m'; BOLD='\033[1m'; RESET='\033[0m'
+[[ "$EUID" -ne 0 ]] && { echo -e "${RED}  Run as root: sudo wg-reset${RESET}"; exit 1; }
+echo ""
+echo -e "${YELLOW}${BOLD}  WireGuard Manager — Clean Reset${RESET}"
+echo -e "  ${RED}All WireGuard data, clients, Docker containers, and configs will be deleted.${RESET}"
+echo ""
+read -rp "  Type 'yes' to confirm: " confirm
+[[ "${confirm}" != "yes" ]] && { echo "  Cancelled."; exit 0; }
+echo ""
+echo -e "${CYAN}  Stopping WireGuard...${RESET}"
+systemctl stop wg-quick@wg0 2>/dev/null || true
+systemctl disable wg-quick@wg0 2>/dev/null || true
+echo -e "${GREEN}  ✔ WireGuard stopped.${RESET}"
+if command -v docker &>/dev/null; then
+    echo -e "${CYAN}  Removing Docker and Uptime Kuma...${RESET}"
+    docker stop uptime-kuma 2>/dev/null || true
+    docker rm uptime-kuma 2>/dev/null || true
+    docker volume rm uptime-kuma 2>/dev/null || true
+    systemctl stop docker 2>/dev/null || true
+    systemctl stop docker.socket 2>/dev/null || true
+    systemctl disable docker 2>/dev/null || true
+    apt-get remove -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin 2>/dev/null || true
+    apt-get remove -y docker docker.io 2>/dev/null || true
+    apt-get autoremove -y 2>/dev/null || true
+    rm -rf /var/lib/docker /var/lib/containerd /etc/docker
+    rm -f /etc/apt/sources.list.d/docker.list /etc/apt/keyrings/docker.gpg /etc/apt/keyrings/docker.asc
+    echo -e "${GREEN}  ✔ Docker removed.${RESET}"
+fi
+echo -e "${CYAN}  Removing WireGuard packages...${RESET}"
+apt-get remove -y wireguard wireguard-tools 2>/dev/null || true
+apt-get autoremove -y 2>/dev/null || true
+echo -e "${GREEN}  ✔ Packages removed.${RESET}"
+rm -rf /etc/wireguard && echo -e "${GREEN}  ✔ /etc/wireguard removed.${RESET}"
+rm -rf /opt/wireguard  && echo -e "${GREEN}  ✔ /opt/wireguard removed.${RESET}"
+rm -f /usr/local/bin/wg-add-client /usr/local/bin/wg-delete-client /usr/local/bin/wg-show-client \
+      /usr/local/bin/wg-list-clients /usr/local/bin/wg-disable-client /usr/local/bin/wg-enable-client \
+      /usr/local/bin/wg-rename-client /usr/local/bin/wg-export-client /usr/local/bin/wg-import-client \
+      /usr/local/bin/wg-regen-qr /usr/local/bin/wg-update /usr/local/bin/wg-check-update \
+      /usr/local/bin/wg-dashboard-passwd /usr/local/bin/wg-reset
+echo -e "${GREEN}  ✔ Scripts removed.${RESET}"
+rm -f /etc/cron.d/wireguard-ddns /etc/cron.d/wireguard-backup /etc/cron.d/wireguard-update-check
+rm -f /etc/sysctl.d/99-wireguard-manager.conf
+sysctl -w net.ipv4.ip_forward=0 > /dev/null 2>&1 || true
+rm -f /etc/sudoers.d/wireguard-manager
+if [[ -d /var/www/html/wireguard-manager ]]; then
+    rm -rf /var/www/html/wireguard-manager
+    a2dissite wireguard-manager.conf > /dev/null 2>&1 || true
+    rm -f /etc/apache2/sites-available/wireguard-manager.conf
+    systemctl reload apache2 2>/dev/null || true
+    echo -e "${GREEN}  ✔ Dashboard removed.${RESET}"
+fi
+if command -v ufw &>/dev/null; then
+    ufw delete allow 51820/udp > /dev/null 2>&1 || true
+    ufw delete allow 80/tcp    > /dev/null 2>&1 || true
+    ufw delete allow 443/tcp   > /dev/null 2>&1 || true
+    ufw delete allow 3001/tcp  > /dev/null 2>&1 || true
+    ufw delete allow 22/tcp    > /dev/null 2>&1 || true
+    ufw delete allow OpenSSH   > /dev/null 2>&1 || true
+    echo -e "${GREEN}  ✔ UFW rules removed.${RESET}"
+fi
+rm -rf /var/log/wireguard-manager && echo -e "${GREEN}  ✔ Logs removed.${RESET}"
+echo ""
+echo -e "${GREEN}${BOLD}  Reset complete. System is clean.${RESET}"
+echo -e "  Run: ${CYAN}sudo bash install.sh${RESET}"
+echo ""
+SCRIPT_PATH="$(realpath "$0")"
+rm -f "${SCRIPT_PATH}"
+RESET_EMBED
+    fi
+
+    chmod 700 "${dest}"
+
+    # Install as wg-reset command so it's easy to call from anywhere
+    cat > "${BIN_DIR}/wg-reset" <<EOF
+#!/usr/bin/env bash
+# WireGuard Manager — Reset shortcut
+exec bash "${dest}" "\$@"
+EOF
+    chmod +x "${BIN_DIR}/wg-reset"
+
+    print_success "Reset script ready. Run anytime with: sudo wg-reset"
+    log_success "reset.sh installed at ${dest} | wg-reset command added."
 }
 
 # =============================================================================
@@ -1502,7 +1614,7 @@ print_completion() {
     fi
 
     echo -e "\n  ${BOLD}Logs:${RESET} ${WGM_LOG_DIR}/"
-    echo -e "  ${BOLD}Reset:${RESET} sudo bash ${WGM_DIR}/reset.sh"
+    echo -e "  ${BOLD}Reset:${RESET} sudo wg-reset"
     echo -e "\n  ${YELLOW}Add your first client:${RESET}  wg-add-client myfirstdevice\n"
 }
 
