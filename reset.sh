@@ -13,7 +13,7 @@ YELLOW='\033[1;33m'; BOLD='\033[1m'; RESET='\033[0m'
 echo ""
 echo -e "${YELLOW}${BOLD}  WireGuard Manager — Clean Reset${RESET}"
 echo -e "  This will remove WireGuard and everything the installer created."
-echo -e "  ${RED}All client keys and configs will be permanently deleted.${RESET}"
+echo -e "  ${RED}All client keys, configs, and Docker containers will be permanently deleted.${RESET}"
 echo ""
 read -rp "  Type 'yes' to confirm: " confirm
 [[ "${confirm}" != "yes" ]] && { echo "  Cancelled."; exit 0; }
@@ -22,16 +22,50 @@ echo ""
 
 # ---- Stop and disable WireGuard ----
 echo -e "${CYAN}  Stopping WireGuard...${RESET}"
-systemctl stop    wg-quick@wg0  2>/dev/null || true
-systemctl disable wg-quick@wg0  2>/dev/null || true
-wg-quick down wg0               2>/dev/null || true
+systemctl stop    wg-quick@wg0 2>/dev/null || true
+systemctl disable wg-quick@wg0 2>/dev/null || true
+wg-quick down wg0              2>/dev/null || true
 echo -e "${GREEN}  ✔ WireGuard stopped.${RESET}"
+
+# ---- Remove Uptime Kuma Docker container and volume ----
+if command -v docker &>/dev/null; then
+    echo -e "${CYAN}  Removing Uptime Kuma container...${RESET}"
+    docker stop  uptime-kuma 2>/dev/null || true
+    docker rm    uptime-kuma 2>/dev/null || true
+    docker volume rm uptime-kuma 2>/dev/null || true
+    echo -e "${GREEN}  ✔ Uptime Kuma removed.${RESET}"
+
+    echo -e "${CYAN}  Removing Docker...${RESET}"
+    # Stop Docker so all veth interfaces are torn down cleanly
+    systemctl stop docker 2>/dev/null || true
+    systemctl stop docker.socket 2>/dev/null || true
+    systemctl disable docker 2>/dev/null || true
+
+    # Remove Docker packages
+    apt-get remove -y docker-ce docker-ce-cli containerd.io \
+        docker-buildx-plugin docker-compose-plugin 2>/dev/null || true
+    apt-get remove -y docker docker.io docker-compose docker-doc \
+        podman-docker 2>/dev/null || true
+    apt-get autoremove -y 2>/dev/null || true
+
+    # Remove Docker data directories (removes all veth interfaces implicitly)
+    rm -rf /var/lib/docker
+    rm -rf /var/lib/containerd
+    rm -rf /etc/docker
+    rm -f  /etc/apt/sources.list.d/docker.list
+    rm -f  /etc/apt/keyrings/docker.gpg
+    rm -f  /etc/apt/keyrings/docker.asc
+
+    echo -e "${GREEN}  ✔ Docker removed.${RESET}"
+else
+    echo -e "  Docker not installed — skipping."
+fi
 
 # ---- Remove WireGuard packages ----
 echo -e "${CYAN}  Removing WireGuard packages...${RESET}"
 apt-get remove -y wireguard wireguard-tools 2>/dev/null || true
 apt-get autoremove -y 2>/dev/null || true
-echo -e "${GREEN}  ✔ Packages removed.${RESET}"
+echo -e "${GREEN}  ✔ WireGuard packages removed.${RESET}"
 
 # ---- Remove WireGuard config and client data ----
 echo -e "${CYAN}  Removing /etc/wireguard/...${RESET}"
@@ -78,7 +112,7 @@ echo -e "${CYAN}  Removing sudoers entry...${RESET}"
 rm -f /etc/sudoers.d/wireguard-manager
 echo -e "${GREEN}  ✔ Sudoers entry removed.${RESET}"
 
-# ---- Remove dashboard (if installed) ----
+# ---- Remove dashboard ----
 if [[ -d /var/www/html/wireguard-manager ]]; then
     echo -e "${CYAN}  Removing PHP dashboard...${RESET}"
     rm -rf /var/www/html/wireguard-manager
@@ -88,13 +122,15 @@ if [[ -d /var/www/html/wireguard-manager ]]; then
     echo -e "${GREEN}  ✔ Dashboard removed.${RESET}"
 fi
 
-# ---- Remove UFW rules ----
+# ---- Remove UFW rules (use the port in case profile varies) ----
 if command -v ufw &>/dev/null; then
     echo -e "${CYAN}  Removing UFW rules...${RESET}"
     ufw delete allow 51820/udp > /dev/null 2>&1 || true
     ufw delete allow 80/tcp    > /dev/null 2>&1 || true
     ufw delete allow 443/tcp   > /dev/null 2>&1 || true
     ufw delete allow 3001/tcp  > /dev/null 2>&1 || true
+    ufw delete allow 22/tcp    > /dev/null 2>&1 || true
+    ufw delete allow OpenSSH   > /dev/null 2>&1 || true
     echo -e "${GREEN}  ✔ UFW rules removed.${RESET}"
 fi
 

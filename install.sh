@@ -3,7 +3,7 @@
 # WireGuard Manager — install.sh
 # =============================================================================
 # Project   : WireGuard Manager
-# Author    : Winter Storm Systems
+# Author    : ZED Official
 # License   : MIT
 # Description:
 #   Interactive installer for WireGuard + client management scripts,
@@ -67,7 +67,7 @@ print_header() {
     echo -e "${CYAN}${BOLD}"
     echo "  ╔══════════════════════════════════════════════════╗"
     echo "  ║          WireGuard Manager  v${WGM_VERSION}             ║"
-    echo "  ║         	       by ZED Official                 ║"
+    echo "  ║              by ZED Official                    ║"
     echo "  ╚══════════════════════════════════════════════════╝"
     echo -e "${RESET}"
 }
@@ -1220,7 +1220,9 @@ setup_uptime_kuma() {
     spinner $! "Starting Uptime Kuma..."
 
     print_success "Uptime Kuma started."
-    print_info "Access Uptime Kuma at: http://${SERVER_ENDPOINT}:3001"
+    local internal_ip
+    internal_ip="$(ip route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}' || hostname -I 2>/dev/null | awk '{print $1}' || echo 'your-server-ip')"
+    print_info "Access Uptime Kuma at: http://${internal_ip}:3001"
     print_info "First launch will prompt you to create an admin account."
     log_success "Uptime Kuma container started."
 }
@@ -1346,12 +1348,34 @@ EOF
         > /opt/wireguard/dashboard.passwd
     chmod 640 /opt/wireguard/dashboard.passwd
 
-    print_success "Dashboard installed at: http://${SERVER_ENDPOINT}"
+    local internal_ip
+    internal_ip="$(ip route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}' || hostname -I 2>/dev/null | awk '{print $1}' || echo 'your-server-ip')"
+    print_success "Dashboard installed at: http://${internal_ip}:80"
     print_warn "Default password: admin — CHANGE IT with: wg-dashboard-passwd"
     log_success "Dashboard installed."
 }
 
 # VERIFICATION
+# =============================================================================
+
+install_reset_script() {
+    # Download reset.sh to /opt/wireguard/ so it's always on hand
+    local url="${GITHUB_RAW}/reset.sh"
+    local dest="${WGM_DIR}/reset.sh"
+    local tmp
+    tmp="$(mktemp)"
+
+    if curl -sf --max-time 30 -o "${tmp}" "${url}" && [[ -s "${tmp}" ]]; then
+        mv "${tmp}" "${dest}"
+        chmod 700 "${dest}"
+        print_success "reset.sh saved to: ${dest}"
+        log_success "reset.sh downloaded to ${dest}."
+    else
+        rm -f "${tmp}"
+        log_warn "Could not download reset.sh — run 'wg-update' to fetch it later."
+    fi
+}
+
 # =============================================================================
 
 verify_installation() {
@@ -1448,14 +1472,19 @@ print_completion() {
     echo -e "  ${CYAN}wg-update --check${RESET}      — Check if update is available"
 
     if [[ "${INSTALL_DASHBOARD}" == true ]]; then
+        # Detect internal/LAN IP for dashboard access
+        local internal_ip
+        internal_ip="$(ip route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}' || hostname -I 2>/dev/null | awk '{print $1}' || echo 'your-server-ip')"
         echo -e "\n  ${BOLD}Dashboard:${RESET}"
-        echo -e "  ${CYAN}URL      :${RESET} http://${SERVER_ENDPOINT}"
+        echo -e "  ${CYAN}URL      :${RESET} http://${internal_ip}:80"
         echo -e "  ${CYAN}Password :${RESET} admin ${YELLOW}(change with: wg-dashboard-passwd)${RESET}"
     fi
 
     if [[ "${INSTALL_KUMA}" == true ]]; then
+        local internal_ip
+        internal_ip="$(ip route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}' || hostname -I 2>/dev/null | awk '{print $1}' || echo 'your-server-ip')"
         echo -e "\n  ${BOLD}Uptime Kuma:${RESET}"
-        echo -e "  ${CYAN}URL      :${RESET} http://${SERVER_ENDPOINT}:3001"
+        echo -e "  ${CYAN}URL      :${RESET} http://${internal_ip}:3001"
     fi
 
     if [[ "${DDNS_NAME}" != "None" ]]; then
@@ -1473,6 +1502,7 @@ print_completion() {
     fi
 
     echo -e "\n  ${BOLD}Logs:${RESET} ${WGM_LOG_DIR}/"
+    echo -e "  ${BOLD}Reset:${RESET} sudo bash ${WGM_DIR}/reset.sh"
     echo -e "\n  ${YELLOW}Add your first client:${RESET}  wg-add-client myfirstdevice\n"
 }
 
@@ -1517,6 +1547,7 @@ main() {
     setup_backup
     setup_uptime_kuma
     setup_dashboard
+    install_reset_script
 
     verify_installation
     print_completion

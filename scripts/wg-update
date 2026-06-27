@@ -171,6 +171,9 @@ SCRIPTS=(
     "wg-check-update"
 )
 
+# Also re-download reset.sh to keep it current
+dl "reset.sh" "\${WGM_DIR}/reset.sh" && chmod 700 "\${WGM_DIR}/reset.sh" || true
+
 UPDATED_SCRIPTS=0
 FAILED_SCRIPTS=0
 
