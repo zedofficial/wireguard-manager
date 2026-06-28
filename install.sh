@@ -303,7 +303,10 @@ check_existing_wireguard() {
 setup_logging() {
     mkdir -p "${WGM_LOG_DIR}"
     touch "${WGM_LOG_FILE}"
-    chmod 640 "${WGM_LOG_FILE}"
+    # 644 so the dashboard (www-data) can show the install log. Contains only the
+    # server PUBLIC key and config choices — no secrets. Other logs (ddns/update/
+    # backup) are created 644 by their root cron jobs, so this keeps them consistent.
+    chmod 644 "${WGM_LOG_FILE}"
     log_info "WireGuard Manager installer started — version ${WGM_VERSION}"
     log_info "Date: $(date)"
 }
@@ -1248,6 +1251,11 @@ setup_dashboard() {
         log_error "PHP installation failed."
     fi
 
+    # Let www-data read the systemd journal so the dashboard's WireGuard/System
+    # log tabs work (journalctl needs this group). Apache picks up the new group
+    # when it (re)starts below. Harmless if the group is absent.
+    usermod -aG systemd-journal www-data 2>/dev/null || true
+
     DASHBOARD_DIR="/var/www/html/wireguard-manager"
     mkdir -p "${DASHBOARD_DIR}"
 
@@ -1340,10 +1348,10 @@ www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-regen-qr
 www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-show-qr
 www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-get-config
 www-data ALL=(ALL) NOPASSWD: /opt/wireguard/backup.sh
-www-data ALL=(ALL) NOPASSWD: /bin/systemctl start wg-quick@wg0
-www-data ALL=(ALL) NOPASSWD: /bin/systemctl stop wg-quick@wg0
-www-data ALL=(ALL) NOPASSWD: /bin/systemctl restart wg-quick@wg0
-www-data ALL=(ALL) NOPASSWD: /bin/systemctl reload wg-quick@wg0
+www-data ALL=(ALL) NOPASSWD: /usr/bin/systemctl start wg-quick@wg0, /bin/systemctl start wg-quick@wg0
+www-data ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop wg-quick@wg0, /bin/systemctl stop wg-quick@wg0
+www-data ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart wg-quick@wg0, /bin/systemctl restart wg-quick@wg0
+www-data ALL=(ALL) NOPASSWD: /usr/bin/systemctl reload wg-quick@wg0, /bin/systemctl reload wg-quick@wg0
 www-data ALL=(ALL) NOPASSWD: /usr/bin/wg
 www-data ALL=(ALL) NOPASSWD: /usr/sbin/wg
 EOF

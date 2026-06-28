@@ -124,7 +124,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['section'])) {
         }
 
         if ($section === 'backup') {
-            exec('sudo bash /opt/wireguard/backup.sh 2>&1', $out, $code);
+            exec('sudo /opt/wireguard/backup.sh 2>&1', $out, $code);
             if ($code === 0) {
                 $msg = 'Manual backup triggered successfully.';
             } else {

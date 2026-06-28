@@ -96,7 +96,7 @@ DISABLED=0
 
 while IFS='|' read -r name ip pubkey created status; do
     [[ "${name}" == \#* || -z "${name}" ]] && continue
-    (( TOTAL++ ))
+    (( TOTAL++ )) || true
 
     # Determine connection status
     hs="${HANDSHAKES[${pubkey}]:-0}"
@@ -104,7 +104,7 @@ while IFS='|' read -r name ip pubkey created status; do
     if [[ "${status}" == "disabled" ]]; then
         status_label="${RED}✖ disabled${RESET}"
         hs_human="—"
-        (( DISABLED++ ))
+        (( DISABLED++ )) || true
     elif [[ "${hs}" != "0" && -n "${hs}" ]]; then
         # Consider "online" if handshake within last 3 minutes (180s)
         now="$(date +%s)"
@@ -117,7 +117,7 @@ while IFS='|' read -r name ip pubkey created status; do
         hs_human="$(date -d "@${hs}" '+%Y-%m-%d %H:%M' 2>/dev/null \
                  || date -r "${hs}"  '+%Y-%m-%d %H:%M' 2>/dev/null \
                  || echo 'unknown')"
-        (( ACTIVE++ ))
+        (( ACTIVE++ )) || true
     else
         status_label="${YELLOW}○ offline${RESET}"
         hs_human="never"
