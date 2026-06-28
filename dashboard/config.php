@@ -459,7 +459,7 @@ layout_sidebar();
                 </table>
 
                 <!-- Toggle auto-update via config.env -->
-                <form method="POST">
+                <form method="POST" id="update-settings-form">
                     <input type="hidden" name="section" value="update_settings">
                     <input type="hidden" name="csrf"    value="<?= $_SESSION['csrf'] ?>">
                     <div style="display:flex; flex-direction:column; gap:.6rem;">
@@ -477,15 +477,20 @@ layout_sidebar();
                             Enable nightly update checks
                         </label>
                     </div>
-                    <div style="display:flex; gap:.5rem; margin-top:.75rem;">
-                        <button type="submit" class="btn btn-sm btn-wgm-primary">Save</button>
-                        <form method="POST" action="action.php" style="display:inline;">
-                            <input type="hidden" name="action" value="check_update">
-                            <input type="hidden" name="csrf"   value="<?= $_SESSION['csrf'] ?>">
-                            <button type="submit" class="btn btn-sm btn-secondary">Check now</button>
-                        </form>
-                    </div>
                 </form>
+
+                <!-- Save + Check now — kept as SEPARATE sibling forms. Nesting them
+                     (a form inside a form) is invalid HTML and caused "Check now" to
+                     submit the settings form instead. The Save button reaches its form
+                     via the HTML5 form="" attribute. -->
+                <div style="display:flex; gap:.5rem; margin-top:.75rem;">
+                    <button type="submit" form="update-settings-form" class="btn btn-sm btn-wgm-primary">Save</button>
+                    <form method="POST" action="action.php" style="display:inline;">
+                        <input type="hidden" name="action" value="check_update">
+                        <input type="hidden" name="csrf"   value="<?= $_SESSION['csrf'] ?>">
+                        <button type="submit" class="btn btn-sm btn-secondary">Check now</button>
+                    </form>
+                </div>
             </div>
         </div>
 

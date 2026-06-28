@@ -77,6 +77,11 @@ else
     echo -e "  Docker not installed — skipping."
 fi
 
+# Removing Docker (timeout-killed apt/dpkg, systemctl kill, pkill) can leave the
+# terminal with onlcr off, which makes all later output stair-step diagonally.
+# Restore sane terminal settings so the rest prints line-by-line.
+stty sane 2>/dev/null || true
+
 # ---- Remove WireGuard packages ----
 echo -e "${CYAN}> Removing WireGuard packages...${RESET}"
 DEBIAN_FRONTEND=noninteractive apt-get remove -y -q wireguard wireguard-tools >/dev/null 2>&1 || true
@@ -167,5 +172,7 @@ echo -e "  ${CYAN}sudo bash install.sh${RESET}"
 echo ""
 
 # ---- Self-delete ----
-SCRIPT_PATH="$(realpath "$0")"
-rm -f "${SCRIPT_PATH}"
+# Note: if this script was run as /opt/wireguard/reset.sh it's already gone
+# (removed with /opt/wireguard above), so guard against a realpath error.
+SCRIPT_PATH="$(realpath "$0" 2>/dev/null || echo "$0")"
+[[ -f "${SCRIPT_PATH}" ]] && rm -f "${SCRIPT_PATH}" 2>/dev/null || true

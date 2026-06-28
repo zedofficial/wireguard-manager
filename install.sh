@@ -307,7 +307,9 @@ setup_logging() {
     # server PUBLIC key and config choices — no secrets. Other logs (ddns/update/
     # backup) are created 644 by their root cron jobs, so this keeps them consistent.
     chmod 644 "${WGM_LOG_FILE}"
-    log_info "WireGuard Manager installer started — version ${WGM_VERSION}"
+    # Don't log a version here — WGM_VERSION is still the bundled fallback at this
+    # point. resolve_version() runs next and logs the authoritative repo version.
+    log_info "WireGuard Manager installer started."
     log_info "Date: $(date)"
 }
 
@@ -1411,6 +1413,9 @@ if command -v docker &>/dev/null; then
     rm -f /etc/apt/sources.list.d/docker.list /etc/apt/keyrings/docker.gpg /etc/apt/keyrings/docker.asc
     echo -e "${GREEN}  ✔ Docker removed.${RESET}"
 fi
+# Docker removal (apt/dpkg/systemctl) can leave the terminal with onlcr off,
+# making later output stair-step. Restore sane terminal settings.
+stty sane 2>/dev/null || true
 echo -e "${CYAN}  Removing WireGuard packages...${RESET}"
 apt-get remove -y wireguard wireguard-tools 2>/dev/null || true
 apt-get autoremove -y 2>/dev/null || true
@@ -1448,8 +1453,9 @@ echo ""
 echo -e "${GREEN}${BOLD}  Reset complete. System is clean.${RESET}"
 echo -e "  Run: ${CYAN}sudo bash install.sh${RESET}"
 echo ""
-SCRIPT_PATH="$(realpath "$0")"
-rm -f "${SCRIPT_PATH}"
+# Already removed with /opt/wireguard if run from there — guard against realpath error.
+SCRIPT_PATH="$(realpath "$0" 2>/dev/null || echo "$0")"
+[[ -f "${SCRIPT_PATH}" ]] && rm -f "${SCRIPT_PATH}" 2>/dev/null || true
 RESET_EMBED
 
     chmod 700 "${dest}"
