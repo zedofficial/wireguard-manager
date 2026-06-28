@@ -151,85 +151,71 @@ download_file() {
     fi
 }
 
-# ---- Update client management scripts ----
+# ---- Fetch the file manifest (single source of truth for what to update) ----
+# Adding a new script or dashboard page only requires a line in manifest.txt;
+# this updater picks it up automatically — no edits to wg-update needed.
+MANIFEST="$(mktemp)"
+if ! download_file "manifest.txt" "${MANIFEST}" || [[ ! -s "${MANIFEST}" ]]; then
+    echo -e "${RED}  Could not fetch manifest.txt — cannot continue.${RESET}"
+    rm -f "${MANIFEST}"
+    exit 1
+fi
+
+# ---- Update client management scripts (manifest 'bin' entries) ----
 echo ""
 echo -e "  ${CYAN}Updating client management scripts...${RESET}"
 
-SCRIPTS=(
-    "wg-add-client"
-    "wg-delete-client"
-    "wg-show-client"
-    "wg-list-clients"
-    "wg-disable-client"
-    "wg-enable-client"
-    "wg-rename-client"
-    "wg-export-client"
-    "wg-import-client"
-    "wg-regen-qr"
-    "wg-update"
-    "wg-dashboard-passwd"
-    "wg-check-update"
-    "wg-reset"
-    "wg-show-qr"
-    "wg-get-config"
-)
-
-# Also re-download reset.sh to keep it current
-dl "reset.sh" "\${WGM_DIR}/reset.sh" && chmod 700 "\${WGM_DIR}/reset.sh" || true
+# Also re-download reset.sh (lives at repo root, not in scripts/) to keep it current
+RESET_TMP="$(mktemp)"
+if download_file "reset.sh" "${RESET_TMP}" && [[ -s "${RESET_TMP}" ]] \
+    && head -1 "${RESET_TMP}" | grep -q '^#!'; then
+    mv "${RESET_TMP}" "${WGM_DIR}/reset.sh"
+    chmod 700 "${WGM_DIR}/reset.sh"
+else
+    rm -f "${RESET_TMP}"
+fi
 
 UPDATED_SCRIPTS=0
 FAILED_SCRIPTS=0
 
-for script in "${SCRIPTS[@]}"; do
-    # Scripts live in the repo under scripts/ directory
+while read -r repo_path; do
+    [[ -z "${repo_path}" ]] && continue
+    script="$(basename "${repo_path}")"
     TEMP_FILE="$(mktemp)"
-    if download_file "scripts/${script}" "${TEMP_FILE}"; then
+    if download_file "${repo_path}" "${TEMP_FILE}"; then
         # Only replace if the downloaded file looks valid (not empty, has shebang)
         if [[ -s "${TEMP_FILE}" ]] && head -1 "${TEMP_FILE}" | grep -q '^#!'; then
             mv "${TEMP_FILE}" "${BIN_DIR}/${script}"
             chmod +x "${BIN_DIR}/${script}"
             echo -e "  ${GREEN}✔${RESET} ${script}"
-            (( UPDATED_SCRIPTS++ ))
+            (( UPDATED_SCRIPTS++ )) || true
         else
             echo -e "  ${YELLOW}⚠ ${script} — downloaded file invalid, skipping.${RESET}"
             rm -f "${TEMP_FILE}"
-            (( FAILED_SCRIPTS++ ))
+            (( FAILED_SCRIPTS++ )) || true
         fi
     else
         echo -e "  ${YELLOW}⚠ ${script} — not found in this release, skipping.${RESET}"
         rm -f "${TEMP_FILE}"
     fi
-done
+done < <(grep -E '^bin[[:space:]]' "${MANIFEST}" | awk '{print $2}')
 
-# ---- Update dashboard (if installed) ----
+# ---- Update dashboard (manifest 'web' entries, if installed) ----
 if [[ -d "${DASHBOARD_DIR}" ]]; then
     echo ""
     echo -e "  ${CYAN}Updating PHP dashboard...${RESET}"
 
-    DASHBOARD_FILES=(
-        "dashboard/index.php"
-        "dashboard/login.php"
-        "dashboard/logout.php"
-        "dashboard/action.php"
-        "dashboard/clients.php"
-        "dashboard/config.php"
-        "dashboard/logs.php"
-    )
-
-    for f in "${DASHBOARD_FILES[@]}"; do
-        filename="$(basename "${f}")"
+    while read -r repo_path; do
+        [[ -z "${repo_path}" ]] && continue
+        filename="$(basename "${repo_path}")"
         TEMP_FILE="$(mktemp)"
-        if download_file "${f}" "${TEMP_FILE}"; then
-            if [[ -s "${TEMP_FILE}" ]]; then
-                mv "${TEMP_FILE}" "${DASHBOARD_DIR}/${filename}"
-                echo -e "  ${GREEN}✔${RESET} dashboard/${filename}"
-            else
-                rm -f "${TEMP_FILE}"
-            fi
+        if download_file "${repo_path}" "${TEMP_FILE}" && [[ -s "${TEMP_FILE}" ]]; then
+            mv "${TEMP_FILE}" "${DASHBOARD_DIR}/${filename}"
+            echo -e "  ${GREEN}✔${RESET} dashboard/${filename}"
         else
             rm -f "${TEMP_FILE}"
         fi
-    done
+    done < <(grep -E '^web[[:space:]]' "${MANIFEST}" | awk '{print $2}')
 
     # Reload Apache to pick up PHP changes (no downtime)
     systemctl reload apache2 2>/dev/null || true
@@ -252,6 +238,9 @@ if [[ -f "${WGM_DIR}/backup.sh" ]]; then
         echo -e "  ${YELLOW}  backup.sh not updated (not found in release).${RESET}"
     fi
 fi
+
+# ---- Clean up the manifest temp file ----
+rm -f "${MANIFEST}"
 
 # ---- Write new version ----
 echo "${LATEST_VERSION}" > "${VERSION_FILE}"

@@ -373,7 +373,9 @@ cat /var/log/wireguard-manager/update.log
 ```
 wireguard-manager/
   install.sh
+  reset.sh
   version
+  manifest.txt
   README.md
   scripts/
     wg-add-client
@@ -386,9 +388,13 @@ wireguard-manager/
     wg-export-client
     wg-import-client
     wg-regen-qr
+    wg-show-qr
+    wg-get-config
     wg-update
     wg-check-update
+    wg-reset
     wg-dashboard-passwd
+    backup.sh
   dashboard/
     layout.php
     index.php
@@ -401,6 +407,26 @@ wireguard-manager/
   docs/
     README.md
 ```
+
+---
+
+## Maintaining: adding a new script or dashboard page
+
+`manifest.txt` is the single source of truth for which files get deployed. Both
+`install.sh` (fresh installs) and `wg-update` (existing installs) read it, so you
+do **not** edit either of them when adding files.
+
+1. Drop the new file in `scripts/` or `dashboard/`.
+2. Add one line to `manifest.txt`:
+   - `bin scripts/wg-my-command` — a command, installed to `/usr/local/bin`, made executable
+   - `web dashboard/mypage.php` — a dashboard page, installed to the web root
+3. If it's a dashboard page, add its link to `layout.php`. If it's a command the
+   dashboard calls, add a `www-data` rule in the sudoers block of `install.sh`.
+4. Bump `version` and push.
+
+That's it — the new file flows to every install on the next update. (As always,
+the *very first* update after a change runs the old updater once to install the new
+one; brand-new files land on the following update, or immediately via `wg-update --force`.)
 
 ---
 

@@ -20,7 +20,10 @@ set -euo pipefail
 # CONSTANTS & PATHS
 # =============================================================================
 
-WGM_VERSION="1.0.0"
+# Offline fallback only. The real version is fetched from the repo's `version`
+# file at install time (see resolve_version). To release a new version, edit the
+# `version` file in the repo root — you do NOT need to touch this line.
+WGM_VERSION="1.0.1"
 WGM_DIR="/opt/wireguard"
 WGM_LOG_DIR="/var/log/wireguard-manager"
 WGM_LOG_FILE="${WGM_LOG_DIR}/install.log"
@@ -212,6 +215,72 @@ check_internet() {
         exit 1
     fi
     print_success "Internet connection OK."
+}
+
+resolve_version() {
+    # Single source of truth: the `version` file in the repo root.
+    # Everything that records the installed version (config.env, /opt/wireguard/version,
+    # the dashboard, wg-update comparisons) uses WGM_VERSION, so resolving it here
+    # means a release only requires editing the repo's `version` file.
+    # Falls back to the bundled constant if GitHub is unreachable.
+    local remote_version
+    remote_version="$(curl -sf --max-time 10 "${GITHUB_RAW}/version" 2>/dev/null | tr -d '[:space:]' || echo '')"
+    if [[ -n "${remote_version}" ]]; then
+        WGM_VERSION="${remote_version}"
+        log_info "Version resolved from repo: ${WGM_VERSION}"
+    else
+        log_warn "Could not fetch version from GitHub; using bundled fallback ${WGM_VERSION}."
+    fi
+}
+
+# Path to the fetched manifest (set by fetch_manifest).
+MANIFEST_FILE=""
+
+fetch_manifest() {
+    # Download the file manifest once so install_client_scripts and setup_dashboard
+    # both know exactly which files to deploy. The manifest is the single source of
+    # truth — adding a new script/page only requires editing manifest.txt in the repo.
+    MANIFEST_FILE="$(mktemp)"
+    if curl -sf --max-time 15 -o "${MANIFEST_FILE}" "${GITHUB_RAW}/manifest.txt" \
+        && [[ -s "${MANIFEST_FILE}" ]]; then
+        log_info "Manifest fetched from repo."
+    else
+        # Bundled fallback so a fresh install still works if the manifest can't be
+        # fetched (e.g. offline, or an older repo layout without manifest.txt).
+        cat > "${MANIFEST_FILE}" <<'EOF'
+bin scripts/wg-add-client
+bin scripts/wg-delete-client
+bin scripts/wg-show-client
+bin scripts/wg-list-clients
+bin scripts/wg-disable-client
+bin scripts/wg-enable-client
+bin scripts/wg-rename-client
+bin scripts/wg-export-client
+bin scripts/wg-import-client
+bin scripts/wg-regen-qr
+bin scripts/wg-show-qr
+bin scripts/wg-get-config
+bin scripts/wg-dashboard-passwd
+bin scripts/wg-update
+bin scripts/wg-check-update
+bin scripts/wg-reset
+web dashboard/layout.php
+web dashboard/index.php
+web dashboard/login.php
+web dashboard/logout.php
+web dashboard/action.php
+web dashboard/clients.php
+web dashboard/config.php
+web dashboard/logs.php
+EOF
+        log_warn "Manifest not fetched; using bundled fallback list."
+    fi
+}
+
+# Print the repo-relative paths for a manifest category (bin | web).
+manifest_entries() {
+    local category="$1"
+    grep -E "^${category}[[:space:]]" "${MANIFEST_FILE}" 2>/dev/null | awk '{print $2}'
 }
 
 check_existing_wireguard() {
@@ -806,39 +875,24 @@ EOF
         chown root:www-data "${WGM_DB}"
     fi
 
-    # ---- Download all client scripts from GitHub ----
-    # Every script is a standalone file in scripts/ in the repo.
-    # This means wg-update can push fixes to all installs without
-    # anyone needing to re-run install.sh.
-
-    local scripts=(
-        wg-add-client
-        wg-delete-client
-        wg-show-client
-        wg-list-clients
-        wg-disable-client
-        wg-enable-client
-        wg-rename-client
-        wg-export-client
-        wg-import-client
-        wg-regen-qr
-        wg-dashboard-passwd
-        wg-check-update
-        wg-show-qr
-        wg-get-config
-    )
+    # ---- Download all client scripts listed in the manifest ----
+    # The manifest (manifest.txt in the repo) is the single source of truth for
+    # which scripts exist. Adding a new wg-* command means adding one line there —
+    # no edits to this function are needed. wg-update reads the same manifest, so
+    # the new command also reaches existing installs.
 
     local failed=0
 
     print_info "Downloading scripts from GitHub..."
 
-    for script in "${scripts[@]}"; do
-        local url="${GITHUB_RAW}/scripts/${script}"
-        local dest="${BIN_DIR}/${script}"
-        local tmp
+    local repo_path script dest tmp
+    while read -r repo_path; do
+        [[ -z "${repo_path}" ]] && continue
+        script="$(basename "${repo_path}")"
+        dest="${BIN_DIR}/${script}"
         tmp="$(mktemp)"
 
-        if curl -sf --max-time 30 -o "${tmp}" "${url}" \
+        if curl -sf --max-time 30 -o "${tmp}" "${GITHUB_RAW}/${repo_path}" \
             && [[ -s "${tmp}" ]] \
             && head -1 "${tmp}" | grep -q '^#!'; then
             mv "${tmp}" "${dest}"
@@ -861,7 +915,7 @@ STUB
             print_warn "${script} — download failed, stub installed. Run 'wg-update' to fix."
             (( failed++ )) || true
         fi
-    done
+    done < <(manifest_entries bin)
 
     if (( failed > 0 )); then
         print_warn "${failed} script(s) were not downloaded. Run 'wg-update' once internet is confirmed."
@@ -896,122 +950,39 @@ install_updater() {
     echo "${WGM_VERSION}" > "${WGM_DIR}/version"
     chmod 644 "${WGM_DIR}/version"
 
-    # Install wg-update command
-    cat > "${BIN_DIR}/wg-update" <<UPDATER_SCRIPT
-#!/usr/bin/env bash
-# =============================================================================
-# wg-update — WireGuard Manager Self-Updater
-# Pulls latest scripts and dashboard from GitHub.
-# Never touches WireGuard config, keys, or client data.
-# =============================================================================
-set -euo pipefail
-
-GITHUB_RAW="${GITHUB_RAW}"
-WGM_DIR="${WGM_DIR}"
-BIN_DIR="${BIN_DIR}"
-DASHBOARD_DIR="/var/www/html/wireguard-manager"
-WGM_LOG_DIR="${WGM_LOG_DIR}"
-VERSION_FILE="\${WGM_DIR}/version"
-BACKUP_DIR="\${WGM_DIR}/backups/pre-update"
-
-RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'
-YELLOW='\033[1;33m'; BOLD='\033[1m'; RESET='\033[0m'
-
-CHECK_ONLY=false; FORCE_UPDATE=false
-for arg in "\$@"; do
-    case "\${arg}" in --check) CHECK_ONLY=true;; --force) FORCE_UPDATE=true;; esac
-done
-
-[[ "\$EUID" -ne 0 ]] && { echo -e "\${RED}  Run as root.\${RESET}"; exit 1; }
-log() { echo "\$(date '+%Y-%m-%d %H:%M:%S') [UPDATE] \$*" >> "\${WGM_LOG_DIR}/update.log" 2>/dev/null || true; }
-
-echo -e "\n\${CYAN}\${BOLD}  WireGuard Manager — Updater\${RESET}\n"
-
-CURRENT_VERSION="\$(cat "\${VERSION_FILE}" 2>/dev/null | tr -d '[:space:]' || echo 'unknown')"
-echo -e "  Installed : \${CYAN}\${CURRENT_VERSION}\${RESET}"
-
-LATEST_VERSION="\$(curl -sf --max-time 10 "\${GITHUB_RAW}/version" 2>/dev/null | tr -d '[:space:]' || echo '')"
-[[ -z "\${LATEST_VERSION}" ]] && { echo -e "\${RED}  Cannot reach GitHub.\${RESET}"; exit 1; }
-echo -e "  Latest    : \${CYAN}\${LATEST_VERSION}\${RESET}"
-
-if [[ "\${CURRENT_VERSION}" == "\${LATEST_VERSION}" && "\${FORCE_UPDATE}" == false ]]; then
-    echo -e "\n\${GREEN}  Already up to date (\${CURRENT_VERSION}).\${RESET}\n"; exit 0
-fi
-
-if [[ "\${CHECK_ONLY}" == true ]]; then
-    echo -e "\n\${YELLOW}  Update available: \${CURRENT_VERSION} → \${LATEST_VERSION}\${RESET}"
-    echo -e "  Run \${CYAN}wg-update\${RESET} to apply.\n"; exit 0
-fi
-
-echo ""
-read -rp "  Apply update \${CURRENT_VERSION} → \${LATEST_VERSION}? [Y/n]: " confirm
-[[ "\${confirm}" =~ ^[Nn]\$ ]] && { echo "  Cancelled."; exit 0; }
-
-log "Update starting: \${CURRENT_VERSION} → \${LATEST_VERSION}"
-
-# Pre-update backup
-mkdir -p "\${BACKUP_DIR}"
-BACKUP_FILE="\${BACKUP_DIR}/pre_update_\$(date '+%Y%m%d_%H%M%S').tar.gz"
-tar -czf "\${BACKUP_FILE}" "\${BIN_DIR}"/wg-* "\${WGM_DIR}/version" 2>/dev/null || true
-[[ -d "\${DASHBOARD_DIR}" ]] && tar -czf "\${BACKUP_DIR}/dashboard_\$(date '+%Y%m%d_%H%M%S').tar.gz" "\${DASHBOARD_DIR}/" 2>/dev/null || true
-echo -e "  \${GREEN}✔ Backup: \${BACKUP_FILE}\${RESET}"
-
-dl() {
-    local src="\$1" dst="\$2" tmp
-    tmp="\$(mktemp)"
-    if curl -sf --max-time 30 -o "\${tmp}" "\${GITHUB_RAW}/\${src}" && [[ -s "\${tmp}" ]]; then
-        mv "\${tmp}" "\${dst}"; return 0
-    fi
-    rm -f "\${tmp}"; return 1
-}
-
-echo ""
-echo -e "  \${CYAN}Updating scripts...\${RESET}"
-SCRIPTS=(wg-add-client wg-delete-client wg-show-client wg-list-clients
-         wg-disable-client wg-enable-client wg-rename-client
-         wg-export-client wg-import-client wg-regen-qr
-         wg-update wg-dashboard-passwd)
-UPDATED=0
-for s in "\${SCRIPTS[@]}"; do
-    if dl "scripts/\${s}" "\${BIN_DIR}/\${s}"; then
-        chmod +x "\${BIN_DIR}/\${s}"
-        echo -e "  \${GREEN}✔\${RESET} \${s}"; (( UPDATED++ ))
+    # ---- Ensure wg-update is functional ----
+    # install_client_scripts already downloaded wg-update from the manifest. If that
+    # failed (a stub was installed), drop in a minimal bootstrap that fetches the real
+    # updater on first run. Detected via a marker string in the real script.
+    if grep -q "Self-updater" "${BIN_DIR}/wg-update" 2>/dev/null; then
+        print_success "wg-update installed."
     else
-        echo -e "  \${YELLOW}⚠ \${s} — not in this release\${RESET}"
-    fi
-done
-
-if [[ -d "\${DASHBOARD_DIR}" ]]; then
-    echo ""
-    echo -e "  \${CYAN}Updating dashboard...\${RESET}"
-    for f in index.php login.php logout.php action.php clients.php config.php logs.php; do
-        dl "dashboard/\${f}" "\${DASHBOARD_DIR}/\${f}" && echo -e "  \${GREEN}✔\${RESET} \${f}" || true
-    done
-    systemctl reload apache2 2>/dev/null || true
-fi
-
-echo "\${LATEST_VERSION}" > "\${VERSION_FILE}"
-
-echo ""
-echo -e "\${GREEN}\${BOLD}  Update complete: \${CURRENT_VERSION} → \${LATEST_VERSION}\${RESET}"
-echo -e "  \${UPDATED} scripts updated. WireGuard kept running. Clients unaffected.\n"
-log "Update done: \${CURRENT_VERSION} → \${LATEST_VERSION}"
-UPDATER_SCRIPT
-
+        cat > "${BIN_DIR}/wg-update" <<UPDATER_BOOTSTRAP
+#!/usr/bin/env bash
+# Minimal bootstrap updater — fetches the full wg-update from GitHub, then runs it.
+set -e
+[[ "\$EUID" -ne 0 ]] && { echo "Run as root."; exit 1; }
+GITHUB_RAW="${GITHUB_RAW}"
+tmp="\$(mktemp)"
+if curl -sf --max-time 30 -o "\${tmp}" "\${GITHUB_RAW}/scripts/wg-update" && [[ -s "\${tmp}" ]] && head -1 "\${tmp}" | grep -q '^#!'; then
+    mv "\${tmp}" "${BIN_DIR}/wg-update"
     chmod +x "${BIN_DIR}/wg-update"
-    print_success "wg-update installed."
+    exec "${BIN_DIR}/wg-update" "\$@"
+fi
+rm -f "\${tmp}"
+echo "Could not fetch the updater from GitHub. Check your connection and try again."
+exit 1
+UPDATER_BOOTSTRAP
+        chmod +x "${BIN_DIR}/wg-update"
+        print_warn "wg-update download failed — bootstrap installed (self-fetches on first run)."
+    fi
 
-    # ---- Download and install wg-check-update ----
-    local tmp
-    tmp="$(mktemp)"
-    if curl -sf --max-time 30 -o "${tmp}" "${GITHUB_RAW}/scripts/wg-check-update" \
-        && [[ -s "${tmp}" ]] && head -1 "${tmp}" | grep -q '^#!'; then
-        mv "${tmp}" "${BIN_DIR}/wg-check-update"
-        chmod +x "${BIN_DIR}/wg-check-update"
+    # ---- Ensure wg-check-update is functional ----
+    # Also downloaded via the manifest. Install the minimal JSON-writing fallback
+    # only if the real one is missing (a stub was installed).
+    if grep -q "update_status.json" "${BIN_DIR}/wg-check-update" 2>/dev/null; then
         print_success "wg-check-update installed."
     else
-        rm -f "${tmp}"
-        # Embed minimal fallback inline
         cat > "${BIN_DIR}/wg-check-update" <<'STUB'
 #!/usr/bin/env bash
 source /opt/wireguard/config.env 2>/dev/null || true
@@ -1280,30 +1251,21 @@ setup_dashboard() {
     DASHBOARD_DIR="/var/www/html/wireguard-manager"
     mkdir -p "${DASHBOARD_DIR}"
 
-    # ---- Download all dashboard files from GitHub ----
-    # Same pattern as scripts — every PHP file is standalone in dashboard/ in the repo.
-
-    local dashboard_files=(
-        layout.php
-        index.php
-        login.php
-        logout.php
-        action.php
-        clients.php
-        config.php
-        logs.php
-    )
+    # ---- Download all dashboard files listed in the manifest ----
+    # Same single-source-of-truth pattern as the scripts: adding a new dashboard
+    # page is one line in manifest.txt, picked up here and by wg-update.
 
     print_info "Downloading dashboard files from GitHub..."
     local failed=0
 
-    for f in "${dashboard_files[@]}"; do
-        local url="${GITHUB_RAW}/dashboard/${f}"
-        local dest="${DASHBOARD_DIR}/${f}"
-        local tmp
+    local repo_path f dest tmp
+    while read -r repo_path; do
+        [[ -z "${repo_path}" ]] && continue
+        f="$(basename "${repo_path}")"
+        dest="${DASHBOARD_DIR}/${f}"
         tmp="$(mktemp)"
 
-        if curl -sf --max-time 30 -o "${tmp}" "${url}" && [[ -s "${tmp}" ]]; then
+        if curl -sf --max-time 30 -o "${tmp}" "${GITHUB_RAW}/${repo_path}" && [[ -s "${tmp}" ]]; then
             mv "${tmp}" "${dest}"
             chmod 644 "${dest}"
             print_success "${f}"
@@ -1312,7 +1274,7 @@ setup_dashboard() {
             print_warn "${f} — download failed. Run 'wg-update' to fetch it."
             (( failed++ )) || true
         fi
-    done
+    done < <(manifest_entries web)
 
     if (( failed > 0 )); then
         print_warn "${failed} dashboard file(s) missing. Dashboard may not work until 'wg-update' is run."
@@ -1405,23 +1367,9 @@ EOF
 
 install_reset_script() {
     local dest="${WGM_DIR}/reset.sh"
-    local url="${GITHUB_RAW}/reset.sh"
-    local tmp
-    tmp="$(mktemp)"
-    local downloaded=false
 
-    # Try GitHub first
-    if curl -sf --max-time 30 -o "${tmp}" "${url}" \
-        && [[ -s "${tmp}" ]] \
-        && head -1 "${tmp}" | grep -q '^#!'; then
-        mv "${tmp}" "${dest}"
-        downloaded=true
-    else
-        rm -f "${tmp}"
-    fi
-
-    # Fallback: embed reset.sh inline so it's always available
-    # even if the repo doesn't have it yet or GitHub is unreachable
+    # Step 1: Always write the embedded reset.sh first so a working copy
+    # exists even if GitHub is unreachable or the repo doesn't have it yet.
     cat > "${dest}" <<'RESET_EMBED'
 #!/usr/bin/env bash
 # WireGuard Manager — Clean Reset (embedded fallback)
@@ -1670,11 +1618,13 @@ print_completion() {
 
 main() {
     check_not_piped
-    setup_logging
     check_root
+    setup_logging
     print_header
     check_os
     check_internet
+    resolve_version
+    fetch_manifest
     check_existing_wireguard
 
     # Interactive questions

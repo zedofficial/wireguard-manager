@@ -1,0 +1,55 @@
+# WireGuard Manager — file manifest
+# =============================================================================
+# Single source of truth for which files the installer and updater deploy.
+# Both install.sh and wg-update read this file, so adding a new script or
+# dashboard page is a ONE-LINE change here — no need to edit either of them.
+#
+# Format:  <category> <repo-relative-path>
+#   bin  -> installed to /usr/local/bin/<basename>, chmod +x   (the wg-* commands)
+#   web  -> installed to the dashboard dir/<basename>, chmod 644 (PHP pages)
+#
+# Blank lines and lines starting with # are ignored.
+#
+# NOT listed here (handled specially by the installer/updater), but still updatable:
+#   reset.sh          -> /opt/wireguard/reset.sh    The actual reset logic. Special-cased
+#                        because it's the break-glass recovery tool: the installer embeds a
+#                        full working copy as an offline fallback (a manifest stub would be
+#                        useless when you most need it), then upgrades it from the repo.
+#                        wg-update re-downloads it every run, so it IS kept current.
+#   scripts/wg-reset  -> /usr/local/bin/wg-reset    Listed below as a normal 'bin' command.
+#                        This is just a thin launcher that runs reset.sh — not a copy of it.
+#   scripts/backup.sh -> /opt/wireguard/backup.sh   Only deployed/updated when backups are
+#                        enabled (i.e. when /opt/wireguard/backup.sh already exists).
+# =============================================================================
+
+# ---- Client management commands ----
+bin scripts/wg-add-client
+bin scripts/wg-delete-client
+bin scripts/wg-show-client
+bin scripts/wg-list-clients
+bin scripts/wg-disable-client
+bin scripts/wg-enable-client
+bin scripts/wg-rename-client
+bin scripts/wg-export-client
+bin scripts/wg-import-client
+bin scripts/wg-regen-qr
+bin scripts/wg-show-qr
+bin scripts/wg-get-config
+bin scripts/wg-dashboard-passwd
+
+# ---- Update system ----
+bin scripts/wg-update
+bin scripts/wg-check-update
+
+# ---- Reset shortcut command ----
+bin scripts/wg-reset
+
+# ---- Dashboard (PHP) ----
+web dashboard/layout.php
+web dashboard/index.php
+web dashboard/login.php
+web dashboard/logout.php
+web dashboard/action.php
+web dashboard/clients.php
+web dashboard/config.php
+web dashboard/logs.php
