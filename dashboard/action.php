@@ -45,7 +45,7 @@ $allowed_actions = [
     'check_update' => 'sudo wg-check-update 2>&1',
 ];
 
-$action = preg_replace('/[^a-z]/', '', $_POST['action'] ?? '');
+$action = preg_replace('/[^a-z_]/', '', $_POST['action'] ?? '');
 
 if (!array_key_exists($action, $allowed_actions)) {
     header('Location: index.php?err=invalid_action');

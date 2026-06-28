@@ -248,6 +248,13 @@ echo "${LATEST_VERSION}" > "${VERSION_FILE}"
 chown root:www-data "${VERSION_FILE}" 2>/dev/null || true
 chmod 644 "${VERSION_FILE}" 2>/dev/null || true
 
+# Keep config.env's version snapshot in sync (it's an install-time copy)
+sed -i "s/^WGM_VERSION=.*/WGM_VERSION=\"${LATEST_VERSION}\"/" "${WGM_DIR}/config.env" 2>/dev/null || true
+
+# Refresh the dashboard's update status so the "update available" banner clears
+# immediately instead of lingering until the next nightly check.
+[[ -x "${BIN_DIR}/wg-check-update" ]] && "${BIN_DIR}/wg-check-update" >/dev/null 2>&1 || true
+
 # ---- Done ----
 echo ""
 echo -e "${GREEN}${BOLD}  Update complete!${RESET}"

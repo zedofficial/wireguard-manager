@@ -138,6 +138,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['section'])) {
 // ---- Reload config after possible update ----
 $cfg = wgm_config();
 
+// ---- Flash messages from action.php redirects (GET) ----
+// action.php runs wg-check-update / wg-update then redirects here with ?msg=...
+if (!$msg && isset($_GET['msg'])) {
+    if ($_GET['msg'] === 'check_triggered') {
+        $upd = wgm_update_status();
+        if (($upd['status'] ?? '') === 'available') {
+            $msg = 'Checked for updates — update available: '
+                 . htmlspecialchars($upd['current_version'] ?? '?') . ' → '
+                 . htmlspecialchars($upd['latest_version'] ?? '?') . '.';
+        } else {
+            $msg = 'Checked for updates — you are on the latest version ('
+                 . htmlspecialchars($upd['latest_version'] ?? wgm_version()) . ').';
+        }
+    } elseif ($_GET['msg'] === 'update_triggered') {
+        $msg = 'Update applied. Now running version ' . htmlspecialchars(wgm_version()) . '.';
+    }
+}
+
 // ---- Read current DDNS script to detect provider ----
 $ddns_script = @file_get_contents('/opt/wireguard/ddns/update.sh') ?: '';
 $current_ddns = 'none';
@@ -190,7 +208,7 @@ layout_sidebar();
                         ['Interface IP',   $wg_iface_ip ?: '—'],
                         ['Network Iface',  $cfg['NET_IFACE'] ?? '—'],
                         ['IPv6',           ($cfg['ENABLE_IPV6'] ?? 'false') === 'true' ? 'Enabled' : 'Disabled'],
-                        ['WGM Version',    $cfg['WGM_VERSION'] ?? '—'],
+                        ['WGM Version',    wgm_version()],
                     ];
                     foreach ($rows as [$label, $val]): ?>
                     <tr style="border-bottom:1px solid var(--border);">
@@ -361,7 +379,7 @@ layout_sidebar();
                 <?php
                 $upd = wgm_update_status();
                 $upd_status  = $upd['status'] ?? 'unknown';
-                $upd_current = $upd['current_version'] ?? ($cfg['WGM_VERSION'] ?? '—');
+                $upd_current = $upd['current_version'] ?? wgm_version();
                 $upd_latest  = $upd['latest_version'] ?? '—';
                 $upd_checked = $upd['checked_at'] ?? 'Never';
                 $upd_auto    = ($upd['auto_update'] ?? false) === true

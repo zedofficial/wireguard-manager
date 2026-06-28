@@ -37,6 +37,16 @@ function wgm_config(): array {
     return $cfg;
 }
 
+// ---- Installed version ----
+// Read from /opt/wireguard/version — the authoritative file that wg-update
+// rewrites on every update. config.env's WGM_VERSION is only an install-time
+// snapshot and is not a reliable source after an update, so it's just a fallback.
+function wgm_version(): string {
+    $v = @file_get_contents('/opt/wireguard/version');
+    if ($v !== false && trim($v) !== '') return trim($v);
+    return wgm_config()['WGM_VERSION'] ?? '—';
+}
+
 // ---- WireGuard status ----
 function wgm_wg_status(): string {
     exec('systemctl is-active wg-quick@wg0 2>/dev/null', $out);
@@ -71,8 +81,6 @@ function wgm_update_status(): array {
     return is_array($data) ? $data : [];
 }
 
-$update_status = wgm_update_status();
-$update_available = ($update_status['status'] ?? '') === 'available';
 $nav_items = [
     'dashboard' => ['icon' => 'bi-speedometer2', 'label' => 'Dashboard',     'href' => 'index.php'],
     'clients'   => ['icon' => 'bi-people',        'label' => 'Clients',       'href' => 'clients.php'],
@@ -386,6 +394,7 @@ code {
 
 function layout_sidebar(): void {
     global $nav_items, $active_nav, $wg_running, $cfg;
+    $update_available = (wgm_update_status()['status'] ?? '') === 'available';
 ?>
 <aside class="wgm-sidebar">
     <a href="index.php" class="wgm-brand">
@@ -425,7 +434,8 @@ function layout_sidebar(): void {
 <?php } // end layout_sidebar
 
 function layout_topbar(string $title, string $icon = 'bi-circle', string $extra = ''): void {
-    global $update_available, $update_status;
+    $update_status    = wgm_update_status();
+    $update_available = ($update_status['status'] ?? '') === 'available';
     ?>
 <div class="wgm-topbar">
     <h1><i class="bi <?= $icon ?> me-2 text-accent"></i><?= htmlspecialchars($title) ?></h1>
