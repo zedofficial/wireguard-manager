@@ -69,17 +69,27 @@ function colorize(string $text): string {
     $lines = explode("\n", htmlspecialchars($text));
     $out   = [];
     foreach ($lines as $line) {
-        if (preg_match('/error|fail|critical|fatal/i', $line)) {
-            $out[] = '<span style="color:#f85149;">' . $line . '</span>';
-        } elseif (preg_match('/warn/i', $line)) {
-            $out[] = '<span style="color:#d29922;">' . $line . '</span>';
-        } elseif (preg_match('/success|started|running|active|ok\b|done/i', $line)) {
-            $out[] = '<span style="color:#3fb950;">' . $line . '</span>';
+        // Prefer an explicit structured log level (Docker/journald write level=info,
+        // level=error, etc.) over keyword matching — otherwise an info line that merely
+        // contains an error="..." field gets painted red and looks like a failure.
+        if (preg_match('/\blevel=(error|fatal|panic|crit\w*|emerg\w*|alert)\b/i', $line)) {
+            $color = '#f85149';
+        } elseif (preg_match('/\blevel=warn(ing)?\b/i', $line)) {
+            $color = '#d29922';
+        } elseif (preg_match('/\blevel=(info|debug|trace|notice)\b/i', $line)) {
+            $color = '';   // structured info/debug — never alarm, regardless of words inside
+        } elseif (preg_match('/\b(error|fail|critical|fatal)\b/i', $line)) {
+            $color = '#f85149';
+        } elseif (preg_match('/\bwarn/i', $line)) {
+            $color = '#d29922';
+        } elseif (preg_match('/\b(success|started|running|active|ok|done)\b/i', $line)) {
+            $color = '#3fb950';
         } elseif (preg_match('/^\d{4}-\d{2}-\d{2}|^[A-Z][a-z]{2}\s+\d/', $line)) {
-            $out[] = '<span style="color:#8b949e;">' . $line . '</span>';
+            $color = '#8b949e';
         } else {
-            $out[] = $line;
+            $color = '';
         }
+        $out[] = $color ? '<span style="color:' . $color . ';">' . $line . '</span>' : $line;
     }
     return implode("\n", $out);
 }
