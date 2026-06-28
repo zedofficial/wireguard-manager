@@ -43,6 +43,8 @@ $allowed_actions = [
     'reload'       => 'sudo systemctl reload  wg-quick@wg0',
     'update'       => 'sudo wg-update --force --yes 2>&1',
     'check_update' => 'sudo wg-check-update 2>&1',
+    'access_public'  => 'sudo wg-dashboard-access public 2>&1',
+    'access_private' => 'sudo wg-dashboard-access private 2>&1',
 ];
 
 $action = preg_replace('/[^a-z_]/', '', $_POST['action'] ?? '');
@@ -60,6 +62,8 @@ $redirect_map = [
     'reload'       => 'index.php?msg=reloaded',
     'update'       => 'config.php?msg=update_triggered',
     'check_update' => 'config.php?msg=check_triggered',
+    'access_public'  => 'config.php?msg=access_public',
+    'access_private' => 'config.php?msg=access_private',
 ];
 
 // ---- Execute command ----

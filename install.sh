@@ -261,12 +261,14 @@ bin scripts/wg-regen-qr
 bin scripts/wg-show-qr
 bin scripts/wg-get-config
 bin scripts/wg-dashboard-passwd
+bin scripts/wg-dashboard-access
 bin scripts/wg-update
 bin scripts/wg-check-update
 bin scripts/wg-reset
 web dashboard/layout.php
 web dashboard/index.php
 web dashboard/login.php
+web dashboard/change-password.php
 web dashboard/logout.php
 web dashboard/action.php
 web dashboard/clients.php
@@ -551,6 +553,14 @@ ask_optional_components() {
     INSTALL_DASHBOARD=true
     [[ "${install_dash}" =~ ^[Nn]$ ]] && INSTALL_DASHBOARD=false
 
+    # Dashboard is private by default (home network + VPN only). Offer public exposure.
+    DASHBOARD_PUBLIC=false
+    if [[ "${INSTALL_DASHBOARD}" == true ]]; then
+        echo -e "      ${YELLOW}The dashboard is reachable from your home network and over the VPN by default.${RESET}"
+        read -rp "      Also expose it to the PUBLIC internet? [y/N]: " dash_public
+        [[ "${dash_public}" =~ ^[Yy]$ ]] && DASHBOARD_PUBLIC=true
+    fi
+
     read -rp "  Install Uptime Kuma monitoring? [Y/n]: " install_kuma
     INSTALL_KUMA=true
     [[ "${install_kuma}" =~ ^[Nn]$ ]] && INSTALL_KUMA=false
@@ -579,7 +589,7 @@ ask_optional_components() {
         fi
     fi
 
-    log_info "Dashboard: ${INSTALL_DASHBOARD} | Kuma: ${INSTALL_KUMA} | Backup: ${INSTALL_BACKUP} | UpdateCheck: ${ENABLE_UPDATE_CHECK} | AutoUpdate: ${AUTO_UPDATE}"
+    log_info "Dashboard: ${INSTALL_DASHBOARD} (public: ${DASHBOARD_PUBLIC}) | Kuma: ${INSTALL_KUMA} | Backup: ${INSTALL_BACKUP} | UpdateCheck: ${ENABLE_UPDATE_CHECK} | AutoUpdate: ${AUTO_UPDATE}"
 }
 
 # =============================================================================
@@ -599,7 +609,15 @@ confirm_summary() {
     echo -e "  ${BOLD}Client DNS        :${RESET} ${CLIENT_DNS}"
     echo -e "  ${BOLD}DDNS Provider     :${RESET} ${DDNS_NAME}"
     echo -e "  ${BOLD}IPv6              :${RESET} ${ENABLE_IPV6}"
-    echo -e "  ${BOLD}Dashboard         :${RESET} ${INSTALL_DASHBOARD}"
+    local dash_line="${INSTALL_DASHBOARD}"
+    if [[ "${INSTALL_DASHBOARD}" == true ]]; then
+        if [[ "${DASHBOARD_PUBLIC}" == true ]]; then
+            dash_line="true (PUBLIC internet)"
+        else
+            dash_line="true (home network + VPN only)"
+        fi
+    fi
+    echo -e "  ${BOLD}Dashboard         :${RESET} ${dash_line}"
     echo -e "  ${BOLD}Uptime Kuma       :${RESET} ${INSTALL_KUMA}"
     echo -e "  ${BOLD}Auto Backup       :${RESET} ${INSTALL_BACKUP}"
     echo ""
@@ -787,11 +805,21 @@ configure_firewall() {
         print_success "UFW: SSH allowed."
 
         if [[ "${INSTALL_DASHBOARD}" == true ]]; then
-            ufw allow 80/tcp  > /dev/null 2>&1 || true
-            ufw allow 443/tcp > /dev/null 2>&1 || true
-            # Allow dashboard access from VPN clients
+            # VPN clients always reach the dashboard via the wg0 interface
             ufw allow in on wg0 to any port 80 > /dev/null 2>&1 || true
-            print_success "UFW: HTTP/HTTPS allowed for dashboard."
+
+            if [[ "${DASHBOARD_PUBLIC:-false}" == true ]]; then
+                # User opted to expose the dashboard to the public internet
+                ufw allow 80/tcp  > /dev/null 2>&1 || true
+                ufw allow 443/tcp > /dev/null 2>&1 || true
+                print_warn "UFW: dashboard exposed to the PUBLIC internet (port 80/443 open to all)."
+            else
+                # Private by default: home/LAN (private ranges) + VPN only, never the public internet
+                ufw allow from 10.0.0.0/8     to any port 80 > /dev/null 2>&1 || true
+                ufw allow from 172.16.0.0/12  to any port 80 > /dev/null 2>&1 || true
+                ufw allow from 192.168.0.0/16 to any port 80 > /dev/null 2>&1 || true
+                print_success "UFW: dashboard allowed from home network + VPN only (not public)."
+            fi
         fi
 
         if [[ "${INSTALL_KUMA}" == true ]]; then
@@ -864,6 +892,7 @@ WGM_DB="${WGM_DB}"
 WG_CONF="${WG_CONF}"
 ENABLE_UPDATE_CHECK="${ENABLE_UPDATE_CHECK:-true}"
 AUTO_UPDATE="${AUTO_UPDATE:-false}"
+DASHBOARD_PUBLIC="${DASHBOARD_PUBLIC:-false}"
 GITHUB_USER="${GITHUB_USER}"
 GITHUB_REPO="${GITHUB_REPO}"
 GITHUB_BRANCH="${GITHUB_BRANCH}"
@@ -1292,6 +1321,17 @@ setup_dashboard() {
     fi
 
     # ---- Configure Apache vhost ----
+    # Access control, enforced at the app layer so it holds even without UFW:
+    #   private (default) — only private/LAN ranges + localhost. The VPN subnet
+    #                       (10.x) falls inside 10.0.0.0/8, so VPN clients are covered.
+    #   public            — anyone, only if the user explicitly opted in.
+    local dashboard_require
+    if [[ "${DASHBOARD_PUBLIC:-false}" == true ]]; then
+        dashboard_require="Require all granted"
+    else
+        dashboard_require="Require ip 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 127.0.0.1 ::1"
+    fi
+
     cat > /etc/apache2/sites-available/wireguard-manager.conf <<EOF
 <VirtualHost *:80>
     ServerName ${SERVER_HOSTNAME}
@@ -1301,7 +1341,7 @@ setup_dashboard() {
 
     <Directory ${DASHBOARD_DIR}>
         AllowOverride All
-        Require all granted
+        ${dashboard_require}
         Options -Indexes
     </Directory>
 
@@ -1349,6 +1389,8 @@ www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-check-update
 www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-regen-qr
 www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-show-qr
 www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-get-config
+www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-dashboard-passwd --stdin
+www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-dashboard-access private, /usr/local/bin/wg-dashboard-access public
 www-data ALL=(ALL) NOPASSWD: /opt/wireguard/backup.sh
 www-data ALL=(ALL) NOPASSWD: /usr/bin/systemctl start wg-quick@wg0, /bin/systemctl start wg-quick@wg0
 www-data ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop wg-quick@wg0, /bin/systemctl stop wg-quick@wg0
@@ -1387,10 +1429,20 @@ install_reset_script() {
 set -euo pipefail
 RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; YELLOW='\033[1;33m'; BOLD='\033[1m'; RESET='\033[0m'
 [[ "$EUID" -ne 0 ]] && { echo -e "${RED}  Run as root: sudo wg-reset${RESET}"; exit 1; }
+DRY_RUN=false
+[[ "${1:-}" == "--dry-run" ]] && DRY_RUN=true
 echo ""
 echo -e "${YELLOW}${BOLD}  WireGuard Manager — Clean Reset${RESET}"
 echo -e "  ${RED}All WireGuard data, clients, Docker containers, and configs will be deleted.${RESET}"
 echo ""
+if [[ "${DRY_RUN}" == true ]]; then
+    echo -e "${CYAN}${BOLD}  Dry run — would remove (nothing is changed):${RESET}"
+    echo -e "    WireGuard service, Docker/Uptime Kuma, /etc/wireguard, /opt/wireguard,"
+    echo -e "    wg-* commands, cron jobs, sysctl + sudoers entries, dashboard + vhost,"
+    echo -e "    UFW rules, and /var/log/wireguard-manager logs."
+    echo -e "\n  ${GREEN}Nothing was changed.${RESET} Run ${CYAN}sudo wg-reset${RESET} to perform the reset.\n"
+    exit 0
+fi
 read -rp "  Type 'yes' to confirm: " confirm
 [[ "${confirm}" != "yes" ]] && { echo "  Cancelled."; exit 0; }
 echo ""
@@ -1597,7 +1649,12 @@ print_completion() {
         echo -e "\n  ${BOLD}Dashboard:${RESET}"
         echo -e "  ${CYAN}Local URL :${RESET} http://${internal_ip}:80"
         echo -e "  ${CYAN}VPN URL   :${RESET} http://${SERVER_VPN_IP}  ${YELLOW}(use this when connected via VPN)${RESET}"
-        echo -e "  ${CYAN}Password  :${RESET} admin ${YELLOW}(change with: wg-dashboard-passwd)${RESET}"
+        if [[ "${DASHBOARD_PUBLIC}" == true ]]; then
+            echo -e "  ${CYAN}Access    :${RESET} ${RED}PUBLIC — reachable from the internet${RESET}"
+        else
+            echo -e "  ${CYAN}Access    :${RESET} Home network + VPN only ${YELLOW}(not exposed to the internet)${RESET}"
+        fi
+        echo -e "  ${CYAN}Password  :${RESET} admin ${YELLOW}(change NOW with: wg-dashboard-passwd)${RESET}"
     fi
 
     if [[ "${INSTALL_KUMA}" == true ]]; then

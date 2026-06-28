@@ -12,11 +12,35 @@ YELLOW='\033[1;33m'; BOLD='\033[1m'; RESET='\033[0m'
 
 [[ "$EUID" -ne 0 ]] && { echo -e "${RED}  Run as root: sudo bash reset.sh${RESET}"; exit 1; }
 
+# --dry-run: show what would be removed, change nothing.
+DRY_RUN=false
+[[ "${1:-}" == "--dry-run" ]] && DRY_RUN=true
+
 echo ""
 echo -e "${YELLOW}${BOLD}  WireGuard Manager — Clean Reset${RESET}"
 echo -e "  This will remove WireGuard and everything the installer created."
 echo -e "  ${RED}All client keys, configs, and Docker containers will be permanently deleted.${RESET}"
 echo ""
+
+if [[ "${DRY_RUN}" == true ]]; then
+    echo -e "${CYAN}${BOLD}  Dry run — the following would be removed (nothing is changed):${RESET}"
+    echo -e "    • WireGuard service wg-quick@wg0 (stopped & disabled)"
+    echo -e "    • Uptime Kuma container + Docker packages/data (if installed)"
+    echo -e "    • /etc/wireguard/   (server + all client keys and configs)"
+    echo -e "    • /opt/wireguard/   (clients.db, config.env, ddns, backups, scripts)"
+    echo -e "    • /usr/local/bin/wg-* commands"
+    echo -e "    • cron jobs (ddns, backup, update-check)"
+    echo -e "    • /etc/sysctl.d/99-wireguard-manager.conf (IP forwarding)"
+    echo -e "    • /etc/sudoers.d/wireguard-manager"
+    echo -e "    • PHP dashboard + Apache vhost (if installed)"
+    echo -e "    • UFW rules for WireGuard/dashboard ports"
+    echo -e "    • /var/log/wireguard-manager/ logs"
+    echo ""
+    echo -e "  ${GREEN}Nothing was changed.${RESET} Run ${CYAN}sudo wg-reset${RESET} (no --dry-run) to perform the reset."
+    echo ""
+    exit 0
+fi
+
 read -rp "  Type 'yes' to confirm: " confirm
 [[ "${confirm}" != "yes" ]] && { echo "  Cancelled."; exit 0; }
 

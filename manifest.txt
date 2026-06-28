@@ -36,6 +36,7 @@ bin scripts/wg-regen-qr
 bin scripts/wg-show-qr
 bin scripts/wg-get-config
 bin scripts/wg-dashboard-passwd
+bin scripts/wg-dashboard-access
 
 # ---- Update system ----
 bin scripts/wg-update
@@ -48,6 +49,7 @@ bin scripts/wg-reset
 web dashboard/layout.php
 web dashboard/index.php
 web dashboard/login.php
+web dashboard/change-password.php
 web dashboard/logout.php
 web dashboard/action.php
 web dashboard/clients.php

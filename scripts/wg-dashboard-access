@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# =============================================================================
+# wg-dashboard-access
+# WireGuard Manager — switch the dashboard between private and public access.
+#
+#   private  — reachable only from home/LAN (private IP ranges) + VPN clients
+#   public   — also reachable from the public internet
+#
+# Updates the Apache vhost (Require directive) and UFW rules, records the choice
+# in config.env, and reloads Apache. Called by the dashboard via sudo, or by hand.
+#
+# Usage:
+#   sudo wg-dashboard-access private
+#   sudo wg-dashboard-access public
+# =============================================================================
+set -euo pipefail
+
+VHOST="/etc/apache2/sites-available/wireguard-manager.conf"
+CONF_ENV="/opt/wireguard/config.env"
+PRIVATE_REQUIRE="Require ip 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 127.0.0.1 ::1"
+PUBLIC_REQUIRE="Require all granted"
+
+[[ "$EUID" -ne 0 ]] && { echo "ERROR: run as root"; exit 1; }
+
+MODE="${1:-}"
+case "${MODE}" in
+    private) REQUIRE="${PRIVATE_REQUIRE}" ;;
+    public)  REQUIRE="${PUBLIC_REQUIRE}"  ;;
+    *) echo "Usage: wg-dashboard-access <private|public>"; exit 1 ;;
+esac
+
+[[ -f "${VHOST}" ]] || { echo "ERROR: vhost not found (${VHOST}). Is the dashboard installed?"; exit 1; }
+
+# ---- Rewrite the Require line in the vhost (preserve indentation) ----
+if grep -qE '^[[:space:]]*Require ' "${VHOST}"; then
+    sed -i -E "s|^([[:space:]]*)Require .*|\1${REQUIRE}|" "${VHOST}"
+else
+    echo "ERROR: no Require directive found in ${VHOST}"; exit 1
+fi
+
+# ---- Validate the config before reloading; revert the change if it's broken ----
+if ! apache2ctl configtest >/dev/null 2>&1 && ! apachectl configtest >/dev/null 2>&1; then
+    echo "ERROR: Apache config test failed after edit; not reloading"; exit 1
+fi
+
+# ---- Adjust UFW rules ----
+if command -v ufw &>/dev/null; then
+    # VPN access is always allowed
+    ufw allow in on wg0 to any port 80 >/dev/null 2>&1 || true
+    if [[ "${MODE}" == "public" ]]; then
+        ufw allow 80/tcp  >/dev/null 2>&1 || true
+        ufw allow 443/tcp >/dev/null 2>&1 || true
+    else
+        ufw delete allow 80/tcp  >/dev/null 2>&1 || true
+        ufw delete allow 443/tcp >/dev/null 2>&1 || true
+        ufw allow from 10.0.0.0/8     to any port 80 >/dev/null 2>&1 || true
+        ufw allow from 172.16.0.0/12  to any port 80 >/dev/null 2>&1 || true
+        ufw allow from 192.168.0.0/16 to any port 80 >/dev/null 2>&1 || true
+    fi
+fi
+
+# ---- Record the choice in config.env ----
+if [[ -f "${CONF_ENV}" ]]; then
+    NEWVAL="false"; [[ "${MODE}" == "public" ]] && NEWVAL="true"
+    if grep -q '^DASHBOARD_PUBLIC=' "${CONF_ENV}"; then
+        sed -i "s/^DASHBOARD_PUBLIC=.*/DASHBOARD_PUBLIC=\"${NEWVAL}\"/" "${CONF_ENV}"
+    else
+        echo "DASHBOARD_PUBLIC=\"${NEWVAL}\"" >> "${CONF_ENV}"
+    fi
+fi
+
+# ---- Reload Apache (no downtime) ----
+systemctl reload apache2 2>/dev/null || systemctl restart apache2 2>/dev/null || true
+
+echo "OK: dashboard access set to ${MODE}"

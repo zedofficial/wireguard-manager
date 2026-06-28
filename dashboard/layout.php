@@ -23,6 +23,15 @@ if (isset($_SESSION['login_time']) && (time() - $_SESSION['login_time']) > 3600)
     exit;
 }
 
+// ---- Force a password change while still on the default 'admin' ----
+// Refuse to serve any real page until the password is changed. The change-password
+// page is standalone (doesn't include this file), so there's no redirect loop.
+if (($wgm_pw = @file_get_contents('/opt/wireguard/dashboard.passwd')) !== false
+    && password_verify('admin', trim($wgm_pw))) {
+    header('Location: change-password.php');
+    exit;
+}
+
 // ---- Load runtime config ----
 function wgm_config(): array {
     static $cfg = null;

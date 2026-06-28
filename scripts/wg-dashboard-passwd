@@ -7,7 +7,9 @@
 # and writes it to /opt/wireguard/dashboard.passwd.
 #
 # Usage:
-#   sudo wg-dashboard-passwd
+#   sudo wg-dashboard-passwd            (interactive — prompts for the new password)
+#   echo 'newpass' | sudo wg-dashboard-passwd --stdin   (non-interactive; used by the
+#                                                         dashboard's change-password page)
 # =============================================================================
 set -euo pipefail
 
@@ -23,6 +25,38 @@ PASSWD_FILE="/opt/wireguard/dashboard.passwd"
 if ! command -v php &>/dev/null; then
     echo -e "${RED}  PHP is not installed. The dashboard requires PHP to hash passwords.${RESET}"
     exit 1
+fi
+
+# Hash a password with bcrypt. Pass via env var (not argv/inline) so special
+# characters can't break the PHP source or leak through the process list.
+hash_password() {
+    WGM_NEWPASS="$1" php -r 'echo password_hash(getenv("WGM_NEWPASS"), PASSWORD_DEFAULT);'
+}
+
+write_password() {
+    local hash="$1"
+    [[ -z "${hash}" ]] && return 1
+    echo "${hash}" > "${PASSWD_FILE}"
+    chown root:www-data "${PASSWD_FILE}" 2>/dev/null || true
+    chmod 640 "${PASSWD_FILE}"
+}
+
+# ---- Non-interactive mode: read one line from stdin (used by the dashboard) ----
+if [[ "${1:-}" == "--stdin" ]]; then
+    IFS= read -r newpass || true
+    if [[ -z "${newpass}" ]]; then
+        echo "ERROR: empty password"; exit 1
+    fi
+    if [[ "${#newpass}" -lt 6 ]]; then
+        echo "ERROR: password must be at least 6 characters"; exit 1
+    fi
+    if [[ "${newpass}" == "admin" ]]; then
+        echo "ERROR: password cannot be 'admin'"; exit 1
+    fi
+    if write_password "$(hash_password "${newpass}")"; then
+        echo "OK"; exit 0
+    fi
+    echo "ERROR: failed to write password"; exit 1
 fi
 
 echo ""
@@ -50,18 +84,11 @@ if [[ "${#p1}" -lt 6 ]]; then
     [[ ! "${confirm}" =~ ^[Yy]$ ]] && { echo "  Cancelled."; exit 0; }
 fi
 
-# ---- Hash with bcrypt via PHP ----
-HASH="$(php -r "echo password_hash('${p1//\'/\'\\\'\'}', PASSWORD_DEFAULT);")"
-
-if [[ -z "${HASH}" ]]; then
-    echo -e "\n${RED}  Failed to generate password hash.${RESET}\n"
+# ---- Hash with bcrypt via PHP and write ----
+if ! write_password "$(hash_password "${p1}")"; then
+    echo -e "\n${RED}  Failed to generate or write password hash.${RESET}\n"
     exit 1
 fi
-
-# ---- Write to file ----
-echo "${HASH}" > "${PASSWD_FILE}"
-chown root:www-data "${PASSWD_FILE}"
-chmod 640 "${PASSWD_FILE}"
 
 echo ""
 echo -e "${GREEN}  ✔ Dashboard password updated.${RESET}"

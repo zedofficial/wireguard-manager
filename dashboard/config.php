@@ -153,6 +153,12 @@ if (!$msg && isset($_GET['msg'])) {
         }
     } elseif ($_GET['msg'] === 'update_triggered') {
         $msg = 'Update applied. Now running version ' . htmlspecialchars(wgm_version()) . '.';
+    } elseif ($_GET['msg'] === 'access_public') {
+        $msg = 'Dashboard is now PUBLIC — reachable from the internet. Make sure your password is strong.';
+        $msg_type = 'success';
+    } elseif ($_GET['msg'] === 'access_private') {
+        $msg = 'Dashboard is now PRIVATE — home network + VPN only. If you were connected over a public address, reconnect via your LAN or the VPN.';
+        $msg_type = 'success';
     }
 }
 
@@ -369,6 +375,54 @@ layout_sidebar();
                         <i class="bi bi-archive me-1"></i>Run Backup Now
                     </button>
                 </form>
+            </div>
+        </div>
+
+        <!-- Dashboard Access -->
+        <?php $is_public = ($cfg['DASHBOARD_PUBLIC'] ?? 'false') === 'true'; ?>
+        <div class="wgm-card mb-3">
+            <div class="wgm-card-header">Dashboard Access</div>
+            <div class="wgm-card-body">
+                <div style="display:flex; align-items:center; gap:.75rem; margin-bottom:1rem;
+                            padding:.65rem .75rem; background:var(--surface2);
+                            border-radius:var(--radius); border:1px solid var(--border);">
+                    <?php if ($is_public): ?>
+                        <i class="bi bi-globe2" style="color:var(--red); font-size:1.2rem;"></i>
+                        <div>
+                            <div style="font-weight:600; color:var(--red);">Public</div>
+                            <div style="font-size:.75rem; color:var(--muted);">Reachable from the internet</div>
+                        </div>
+                    <?php else: ?>
+                        <i class="bi bi-house-lock-fill" style="color:var(--green); font-size:1.2rem;"></i>
+                        <div>
+                            <div style="font-weight:600; color:var(--green);">Private</div>
+                            <div style="font-size:.75rem; color:var(--muted);">Home network + VPN only</div>
+                        </div>
+                    <?php endif; ?>
+                </div>
+
+                <?php if ($is_public): ?>
+                    <p style="font-size:.8rem; color:var(--muted); margin-bottom:.6rem;">
+                        Anyone who can reach this server's address can open the login page.
+                        Switch back to private to limit it to your home network and the VPN.
+                    </p>
+                    <form method="POST" action="action.php">
+                        <input type="hidden" name="action" value="access_private">
+                        <input type="hidden" name="csrf"   value="<?= $_SESSION['csrf'] ?>">
+                        <button type="submit" class="btn btn-sm btn-wgm-primary">Make private (LAN + VPN only)</button>
+                    </form>
+                <?php else: ?>
+                    <p style="font-size:.8rem; color:var(--muted); margin-bottom:.6rem;">
+                        Only your home network and VPN clients can reach the dashboard.
+                        Exposing it publicly is not recommended unless you understand the risk.
+                    </p>
+                    <form method="POST" action="action.php"
+                          onsubmit="return confirm('Expose the dashboard to the public internet? Make sure your password is strong.');">
+                        <input type="hidden" name="action" value="access_public">
+                        <input type="hidden" name="csrf"   value="<?= $_SESSION['csrf'] ?>">
+                        <button type="submit" class="btn btn-sm btn-secondary">Expose to public internet</button>
+                    </form>
+                <?php endif; ?>
             </div>
         </div>
 

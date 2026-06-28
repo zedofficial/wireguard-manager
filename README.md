@@ -119,14 +119,30 @@ Re-renders the QR code from the existing config. Keys are never changed.
 
 If you installed the dashboard, it runs on port 80 at your server's address.
 
+### Access
+
+By default the dashboard is **private** — reachable only from:
+- your **home/local network** (private IP ranges), and
+- **VPN clients** connected through WireGuard.
+
+It is **not** exposed to the public internet unless you choose to during install
+(the installer asks). This is enforced two ways: an Apache `Require ip` rule and a
+UFW rule, so it holds even if one layer is misconfigured.
+
 ```
-http://your-server-ip
-http://your-ddns-domain.duckdns.org
+http://your-server-ip        # from home / LAN
+http://10.0.0.1              # when connected via the VPN (your server's VPN IP)
 ```
+
+You can switch between **private** and **public** at any time from the dashboard:
+**Configuration → Dashboard Access**. (Or from the terminal: `sudo wg-dashboard-access private` / `public`.)
+This updates both the Apache rule and the firewall and reloads Apache — no reinstall needed.
 
 **Default password:** `admin`
 
-**Change it immediately:**
+The first time you log in, the dashboard **forces you to change the password** before
+you can use it — you can't get past the change-password screen while it's still `admin`.
+You can also change it any time from the terminal:
 ```bash
 sudo wg-dashboard-passwd
 ```
@@ -304,7 +320,14 @@ That's it. WireGuard keeps running. Your clients stay connected.
 
 ## Uninstalling
 
-There is no automated uninstaller yet. To remove manually:
+The fastest way is the built-in reset, which removes everything the installer created:
+
+```bash
+sudo wg-reset --dry-run   # preview exactly what would be removed (changes nothing)
+sudo wg-reset             # actually remove everything, then prompt to reinstall
+```
+
+Or remove it manually:
 
 ```bash
 # Stop and disable WireGuard

@@ -17,6 +17,13 @@ function csrf_ok(): bool {
     return hash_equals($_SESSION['csrf'] ?? '', $_POST['csrf'] ?? '');
 }
 
+// Audit trail — record every client action to the install log (same format as action.php).
+function audit(string $action, int $code = 0, string $detail = ''): void {
+    $line = date('Y-m-d H:i:s') . " [DASHBOARD] action={$action} exit={$code}"
+          . ($detail !== '' ? " {$detail}" : '') . "\n";
+    @file_put_contents('/var/log/wireguard-manager/install.log', $line, FILE_APPEND);
+}
+
 // ---- Sanitize name param ----
 $name = preg_replace('/[^a-zA-Z0-9_-]/', '', $_GET['name'] ?? $_POST['name'] ?? '');
 $action = preg_replace('/[^a-z]/', '', $_GET['action'] ?? $_POST['action'] ?? 'list');
@@ -26,6 +33,7 @@ if ($action === 'download' && $name) {
     $output = [];
     $code   = 0;
     exec('sudo wg-get-config ' . escapeshellarg($name) . ' 2>/dev/null', $output, $code);
+    audit('client_download', $code, "name={$name}");
     if ($code === 0 && !empty($output)) {
         $content = implode("\n", $output);
         header('Content-Type: text/plain; charset=utf-8');
@@ -48,6 +56,7 @@ if ($action === 'add' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $msg = 'Invalid client name.'; $msg_type = 'error';
         } else {
             exec('sudo wg-add-client ' . escapeshellarg($newname) . ' 2>&1', $out, $code);
+            audit('client_add', $code, "name={$newname}");
             if ($code === 0) {
                 header('Location: clients.php?msg=added&name=' . urlencode($newname));
                 exit;
@@ -63,7 +72,8 @@ if ($action === 'add' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 if ($action === 'delete' && $_SERVER['REQUEST_METHOD'] === 'POST' && $name) {
     if (!csrf_ok()) { $msg = 'Invalid request.'; $msg_type = 'error'; }
     else {
-        exec('echo "' . $name . '" | sudo wg-delete-client ' . escapeshellarg($name) . ' 2>&1', $out, $code);
+        exec('echo ' . escapeshellarg($name) . ' | sudo wg-delete-client ' . escapeshellarg($name) . ' 2>&1', $out, $code);
+        audit('client_delete', $code, "name={$name}");
         header('Location: clients.php?msg=deleted&name=' . urlencode($name));
         exit;
     }
@@ -74,6 +84,7 @@ if ($action === 'disable' && $_SERVER['REQUEST_METHOD'] === 'POST' && $name) {
     if (!csrf_ok()) { $msg = 'Invalid request.'; $msg_type = 'error'; }
     else {
         exec('sudo wg-disable-client ' . escapeshellarg($name) . ' 2>&1', $out, $code);
+        audit('client_disable', $code, "name={$name}");
         header('Location: clients.php?msg=disabled&name=' . urlencode($name));
         exit;
     }
@@ -84,6 +95,7 @@ if ($action === 'enable' && $_SERVER['REQUEST_METHOD'] === 'POST' && $name) {
     if (!csrf_ok()) { $msg = 'Invalid request.'; $msg_type = 'error'; }
     else {
         exec('sudo wg-enable-client ' . escapeshellarg($name) . ' 2>&1', $out, $code);
+        audit('client_enable', $code, "name={$name}");
         header('Location: clients.php?msg=enabled&name=' . urlencode($name));
         exit;
     }
@@ -98,6 +110,7 @@ if ($action === 'rename' && $_SERVER['REQUEST_METHOD'] === 'POST' && $name) {
             $msg = 'Invalid new name.'; $msg_type = 'error';
         } else {
             exec('sudo wg-rename-client ' . escapeshellarg($name) . ' ' . escapeshellarg($newname) . ' 2>&1', $out, $code);
+            audit('client_rename', $code, "from={$name} to={$newname}");
             header('Location: clients.php?msg=renamed&from=' . urlencode($name) . '&name=' . urlencode($newname));
             exit;
         }
