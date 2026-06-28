@@ -211,6 +211,7 @@ if [[ -d "${DASHBOARD_DIR}" ]]; then
         TEMP_FILE="$(mktemp)"
         if download_file "${repo_path}" "${TEMP_FILE}" && [[ -s "${TEMP_FILE}" ]]; then
             mv "${TEMP_FILE}" "${DASHBOARD_DIR}/${filename}"
+            chmod 644 "${DASHBOARD_DIR}/${filename}"   # mktemp gives 600 root:root — Apache (www-data) must be able to read it
             echo -e "  ${GREEN}✔${RESET} dashboard/${filename}"
         else
             rm -f "${TEMP_FILE}"
