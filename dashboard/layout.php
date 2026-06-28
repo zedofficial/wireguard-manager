@@ -32,6 +32,17 @@ if (($wgm_pw = @file_get_contents('/opt/wireguard/dashboard.passwd')) !== false
     exit;
 }
 
+// ---- Self-healing update check ----
+// The nightly cron only fires at 1 AM and won't catch up if the machine was asleep
+// or off then. So if the cached status is missing or stale (>12h old), kick off a
+// refresh in the background; the banner reflects reality on the next page load.
+// Even a failed check rewrites the file (status=error) and updates its timestamp,
+// so this can't spam GitHub.
+$wgm_status_file = '/opt/wireguard/update_status.json';
+if (!file_exists($wgm_status_file) || (time() - (int) @filemtime($wgm_status_file)) > 43200) {
+    @exec('sudo /usr/local/bin/wg-check-update > /dev/null 2>&1 &');
+}
+
 // ---- Load runtime config ----
 function wgm_config(): array {
     static $cfg = null;

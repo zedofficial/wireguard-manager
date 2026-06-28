@@ -1040,10 +1040,16 @@ STUB
 
     # ---- Set up nightly update check cron ----
     if [[ "${ENABLE_UPDATE_CHECK:-true}" == true ]]; then
-        echo "0 1 * * * root ${BIN_DIR}/wg-check-update >> ${WGM_LOG_DIR}/update.log 2>&1" \
-            > /etc/cron.d/wireguard-update-check
+        # Daily at 1 AM, plus a catch-up ~1 min after boot so a machine that was
+        # off/asleep at 1 AM still checks once it comes back up (standard cron does
+        # not run missed jobs). The dashboard also self-heals on a stale check.
+        cat > /etc/cron.d/wireguard-update-check <<CRON
+# WireGuard Manager — update check
+0 1 * * * root ${BIN_DIR}/wg-check-update >> ${WGM_LOG_DIR}/update.log 2>&1
+@reboot root sleep 60 && ${BIN_DIR}/wg-check-update >> ${WGM_LOG_DIR}/update.log 2>&1
+CRON
         chmod 644 /etc/cron.d/wireguard-update-check
-        print_success "Nightly update check scheduled at 1:00 AM."
+        print_success "Update check scheduled (daily 1:00 AM + after boot)."
         if [[ "${AUTO_UPDATE:-false}" == true ]]; then
             print_info "Auto-update mode: updates will apply automatically."
         else
@@ -1377,7 +1383,22 @@ EOF
     fi
 
     # ---- sudo rules so www-data can run wg commands ----
-    cat > /etc/sudoers.d/wireguard-manager <<EOF
+    # Deploy the canonical sudoers file from the repo, validated with visudo so a
+    # malformed file can never break sudo. wg-update deploys the same file, so new
+    # privileged commands work after an update — not only after a fresh install.
+    # The inline block is just an offline fallback (keep it in sync with the repo's
+    # wireguard-manager.sudoers).
+    local sudoers_dest="/etc/sudoers.d/wireguard-manager"
+    local sudoers_tmp
+    sudoers_tmp="$(mktemp)"
+    if curl -sf --max-time 30 -o "${sudoers_tmp}" "${GITHUB_RAW}/wireguard-manager.sudoers" \
+        && [[ -s "${sudoers_tmp}" ]] && visudo -cf "${sudoers_tmp}" >/dev/null 2>&1; then
+        mv "${sudoers_tmp}" "${sudoers_dest}"
+        chmod 440 "${sudoers_dest}"
+        print_success "Dashboard sudo rules installed."
+    else
+        rm -f "${sudoers_tmp}"
+        cat > "${sudoers_dest}" <<'SUDOERS'
 # WireGuard Manager dashboard — command permissions for www-data
 www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-add-client
 www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-delete-client
@@ -1398,8 +1419,16 @@ www-data ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart wg-quick@wg0, /bin/syste
 www-data ALL=(ALL) NOPASSWD: /usr/bin/systemctl reload wg-quick@wg0, /bin/systemctl reload wg-quick@wg0
 www-data ALL=(ALL) NOPASSWD: /usr/bin/wg
 www-data ALL=(ALL) NOPASSWD: /usr/sbin/wg
-EOF
-    chmod 440 /etc/sudoers.d/wireguard-manager
+SUDOERS
+        chmod 440 "${sudoers_dest}"
+        # Safety: if even the inline copy is somehow invalid, remove it rather than break sudo
+        if ! visudo -cf "${sudoers_dest}" >/dev/null 2>&1; then
+            rm -f "${sudoers_dest}"
+            print_warn "sudoers validation failed — dashboard actions may need sudo setup."
+        else
+            print_warn "Used inline sudo rules (couldn't fetch from repo)."
+        fi
+    fi
 
     # Set default dashboard password (admin) — owned by root, readable by www-data
     echo "$(php -r "echo password_hash('admin', PASSWORD_DEFAULT);")" \

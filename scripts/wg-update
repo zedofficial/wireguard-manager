@@ -218,6 +218,19 @@ if [[ -d "${DASHBOARD_DIR}" ]]; then
         fi
     done < <(grep -E '^web[[:space:]]' "${MANIFEST}" | awk '{print $2}')
 
+    # Keep the dashboard sudoers rules in sync so newly added privileged commands
+    # work after an update (not only after a fresh install). Validate before
+    # installing — a bad sudoers file must never be written.
+    SUDO_TMP="$(mktemp)"
+    if download_file "wireguard-manager.sudoers" "${SUDO_TMP}" && [[ -s "${SUDO_TMP}" ]] \
+        && visudo -cf "${SUDO_TMP}" >/dev/null 2>&1; then
+        mv "${SUDO_TMP}" /etc/sudoers.d/wireguard-manager
+        chmod 440 /etc/sudoers.d/wireguard-manager
+        echo -e "  ${GREEN}✔${RESET} sudo rules"
+    else
+        rm -f "${SUDO_TMP}"
+    fi
+
     # Reload Apache to pick up PHP changes (no downtime)
     systemctl reload apache2 2>/dev/null || true
     echo -e "  ${GREEN}✔ Apache reloaded.${RESET}"
