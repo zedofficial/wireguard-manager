@@ -1,6 +1,9 @@
 # Local debug screenshots — never publish
 PXL_*.jpg
 
+# Maintainer-only release tooling — stays on my machine, not published
+tools/
+
 # OS / editor cruft
 .DS_Store
 Thumbs.db
