@@ -21,6 +21,12 @@ $log_sources = [
         'cmd'   => 'journalctl -n 150 --no-pager --output=short-iso 2>/dev/null',
         'type'  => 'cmd',
     ],
+    'audit' => [
+        'label' => 'Audit',
+        'icon'  => 'bi-clipboard-check',
+        'path'  => '/var/log/wireguard-manager/dashboard.log',
+        'type'  => 'file',
+    ],
     'ddns' => [
         'label' => 'DDNS',
         'icon'  => 'bi-globe',

@@ -3,7 +3,7 @@
 // logout.php — WireGuard Manager — Logout
 // Destroys the session and redirects to login.
 // =============================================================================
-session_start();
+require __DIR__ . '/bootstrap.php';
 session_unset();
 session_destroy();
 

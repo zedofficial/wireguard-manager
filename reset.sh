@@ -164,8 +164,11 @@ echo -e "${GREEN}✔ Sudoers entry removed.${RESET}"
 if [[ -d /var/www/html/wireguard-manager ]]; then
     echo -e "${CYAN}> Removing PHP dashboard...${RESET}"
     rm -rf /var/www/html/wireguard-manager
-    a2dissite wireguard-manager.conf > /dev/null 2>&1 || true
+    a2dissite wireguard-manager.conf     > /dev/null 2>&1 || true
+    a2dissite wireguard-manager-ssl.conf > /dev/null 2>&1 || true
     rm -f /etc/apache2/sites-available/wireguard-manager.conf
+    rm -f /etc/apache2/sites-available/wireguard-manager-ssl.conf
+    rm -f /etc/ssl/certs/wgm-selfsigned.crt /etc/ssl/private/wgm-selfsigned.key
     systemctl reload apache2 2>/dev/null || true
     echo -e "${GREEN}✔ Dashboard removed.${RESET}"
 fi

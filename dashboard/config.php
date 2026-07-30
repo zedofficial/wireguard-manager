@@ -24,103 +24,77 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['section'])) {
         $section = $_POST['section'];
 
         if ($section === 'dns') {
-            // Validate: must be comma-separated IPs
+            // Validate here for a good error message; the root helper re-validates.
             $raw = trim($_POST['dns'] ?? '');
             $parts = array_map('trim', explode(',', $raw));
-            $valid = true;
+            $valid = $raw !== '';
             foreach ($parts as $p) {
                 if (!filter_var($p, FILTER_VALIDATE_IP)) { $valid = false; break; }
             }
-            if (!$valid || !$raw) {
+            if (!$valid) {
                 $msg = 'Invalid DNS — enter one or more valid IP addresses, comma-separated.';
                 $msg_type = 'error';
             } else {
-                // Update config.env
-                $env_path = '/opt/wireguard/config.env';
-                $content  = file_get_contents($env_path);
-                $content  = preg_replace('/^CLIENT_DNS=.*/m', 'CLIENT_DNS="' . $raw . '"', $content);
-                file_put_contents($env_path, $content);
-
-                // Update wg0.conf DNS for existing peers isn't needed —
-                // DNS only applies to new client configs. Log note.
-                $msg = 'DNS updated to: ' . htmlspecialchars($raw) . '. New clients will use this DNS. Existing clients must regenerate their configs.';
+                // config.env is root-owned; write it through a privileged helper and
+                // check the result, rather than a direct write that would silently fail.
+                exec('sudo /usr/local/bin/wg-set-dns ' . escapeshellarg($raw) . ' 2>&1', $out, $code);
+                if ($code === 0 && in_array('OK', $out, true)) {
+                    $msg = 'DNS updated to: ' . htmlspecialchars($raw) . '. New clients will use this DNS. Existing clients must regenerate their configs.';
+                } else {
+                    $msg = 'Failed to update DNS: ' . htmlspecialchars(implode(' ', $out)); $msg_type = 'error';
+                }
             }
         }
 
         if ($section === 'ddns') {
-            $provider = $_POST['ddns_provider'] ?? '';
-            $script   = '/opt/wireguard/ddns/update.sh';
-
-            // Rebuild the DDNS update script based on new provider/creds
+            // Collect fields and hand them to the root helper via STDIN (so secrets
+            // never appear in the process list). Strip CR/LF from values so they
+            // can't inject extra key=value lines into the payload.
+            $provider = preg_replace('/[^a-z]/', '', $_POST['ddns_provider'] ?? '');
+            $clean = static fn($k) => str_replace(["\r", "\n"], '', trim($_POST[$k] ?? ''));
+            $fields = ['provider=' . $provider];
             switch ($provider) {
                 case 'duckdns':
-                    $sub   = escapeshellarg(trim($_POST['duckdns_sub']   ?? ''));
-                    $token = escapeshellarg(trim($_POST['duckdns_token'] ?? ''));
-                    if (!$sub || !$token) { $msg = 'DuckDNS requires subdomain and token.'; $msg_type = 'error'; break; }
-                    $sh = "#!/usr/bin/env bash\nSUBDOMAIN={$sub}\nTOKEN={$token}\n"
-                        . "IP=\$(curl -sf --max-time 10 https://api.ipify.org)\n"
-                        . "curl -sf \"https://www.duckdns.org/update?domains=\${SUBDOMAIN}&token=\${TOKEN}&ip=\${IP}\" >> /var/log/wireguard-manager/ddns.log\n"
-                        . "echo \" \$(date) IP=\${IP}\" >> /var/log/wireguard-manager/ddns.log\n";
-                    file_put_contents($script, $sh); chmod($script, 0700);
-                    $msg = 'DuckDNS DDNS updated.'; break;
-
+                    $fields[] = 'duckdns_sub='   . $clean('duckdns_sub');
+                    $fields[] = 'duckdns_token=' . $clean('duckdns_token');
+                    break;
                 case 'noip':
-                    $host = escapeshellarg(trim($_POST['noip_host'] ?? ''));
-                    $user = escapeshellarg(trim($_POST['noip_user'] ?? ''));
-                    $pass = escapeshellarg(trim($_POST['noip_pass'] ?? ''));
-                    if (!$host || !$user || !$pass) { $msg = 'No-IP requires hostname, username, and password.'; $msg_type = 'error'; break; }
-                    $sh = "#!/usr/bin/env bash\nHOST={$host}\nUSER={$user}\nPASS={$pass}\n"
-                        . "IP=\$(curl -sf --max-time 10 https://api.ipify.org)\n"
-                        . "curl -sf -u \"\${USER}:\${PASS}\" \"https://dynupdate.no-ip.com/nic/update?hostname=\${HOST}&myip=\${IP}\" -A 'WireGuardManager/1.0' >> /var/log/wireguard-manager/ddns.log\n";
-                    file_put_contents($script, $sh); chmod($script, 0700);
-                    $msg = 'No-IP DDNS updated.'; break;
-
+                    $fields[] = 'noip_host=' . $clean('noip_host');
+                    $fields[] = 'noip_user=' . $clean('noip_user');
+                    $fields[] = 'noip_pass=' . $clean('noip_pass');
+                    break;
                 case 'cloudflare':
-                    $zone   = escapeshellarg(trim($_POST['cf_zone']   ?? ''));
-                    $record = escapeshellarg(trim($_POST['cf_record'] ?? ''));
-                    $token  = escapeshellarg(trim($_POST['cf_token']  ?? ''));
-                    $rname  = escapeshellarg(trim($_POST['cf_rname']  ?? ''));
-                    if (!$zone || !$record || !$token || !$rname) { $msg = 'All Cloudflare fields are required.'; $msg_type = 'error'; break; }
-                    $sh = "#!/usr/bin/env bash\nZONE={$zone}\nRECORD={$record}\nTOKEN={$token}\nRNAME={$rname}\n"
-                        . "IP=\$(curl -sf --max-time 10 https://api.ipify.org)\n"
-                        . "curl -sf -X PATCH \"https://api.cloudflare.com/client/v4/zones/\${ZONE}/dns_records/\${RECORD}\""
-                        . " -H \"Authorization: Bearer \${TOKEN}\" -H 'Content-Type: application/json'"
-                        . " --data \"{\\\"type\\\":\\\"A\\\",\\\"name\\\":\\\"\${RNAME}\\\",\\\"content\\\":\\\"\${IP}\\\",\\\"ttl\\\":60}\" >> /var/log/wireguard-manager/ddns.log\n";
-                    file_put_contents($script, $sh); chmod($script, 0700);
-                    $msg = 'Cloudflare DDNS updated.'; break;
-
+                    $fields[] = 'cf_zone='   . $clean('cf_zone');
+                    $fields[] = 'cf_record=' . $clean('cf_record');
+                    $fields[] = 'cf_token='  . $clean('cf_token');
+                    $fields[] = 'cf_rname='  . $clean('cf_rname');
+                    break;
                 case 'none':
-                    // Disable cron
-                    @unlink('/etc/cron.d/wireguard-ddns');
-                    $msg = 'DDNS disabled. Cron job removed.'; break;
-
+                    break;
                 default:
                     $msg = 'Unknown DDNS provider.'; $msg_type = 'error';
+            }
+            if ($msg_type !== 'error') {
+                $payload = implode("\n", $fields) . "\n";
+                exec('printf %s ' . escapeshellarg($payload) . ' | sudo /usr/local/bin/wg-set-ddns 2>&1', $out, $code);
+                if ($code === 0 && in_array('OK', $out, true)) {
+                    $msg = ($provider === 'none') ? 'DDNS disabled.' : ucfirst($provider) . ' DDNS updated.';
+                } else {
+                    $msg = 'Failed to update DDNS: ' . htmlspecialchars(implode(' ', $out)); $msg_type = 'error';
+                }
             }
         }
 
         if ($section === 'update_settings') {
-            $auto_update   = isset($_POST['auto_update'])  ? 'true' : 'false';
-            $enable_check  = isset($_POST['enable_check']) ? 'true' : 'false';
-
-            // Update config.env
-            $env_path = '/opt/wireguard/config.env';
-            $content  = file_get_contents($env_path);
-            $content  = preg_replace('/^AUTO_UPDATE=.*/m',           "AUTO_UPDATE=\"{$auto_update}\"",  $content);
-            $content  = preg_replace('/^ENABLE_UPDATE_CHECK=.*/m',   "ENABLE_UPDATE_CHECK=\"{$enable_check}\"", $content);
-            file_put_contents($env_path, $content);
-
-            // Toggle cron job
-            $cron_path = '/etc/cron.d/wireguard-update-check';
-            if ($enable_check === 'true') {
-                file_put_contents($cron_path, "0 1 * * * root /usr/local/bin/wg-check-update >> /var/log/wireguard-manager/update.log 2>&1\n");
-                chmod($cron_path, 0644);
+            $auto_update  = isset($_POST['auto_update'])  ? 'true' : 'false';
+            $enable_check = isset($_POST['enable_check']) ? 'true' : 'false';
+            exec('sudo /usr/local/bin/wg-set-update-policy ' . escapeshellarg($auto_update) . ' ' . escapeshellarg($enable_check) . ' 2>&1', $out, $code);
+            if ($code === 0 && in_array('OK', $out, true)) {
+                $mode = $auto_update === 'true' ? 'auto-apply' : 'notify-only';
+                $msg = "Update settings saved. Mode: {$mode}. Nightly check: {$enable_check}.";
             } else {
-                @unlink($cron_path);
+                $msg = 'Failed to save update settings: ' . htmlspecialchars(implode(' ', $out)); $msg_type = 'error';
             }
-
-            $mode = $auto_update === 'true' ? 'auto-apply' : 'notify-only';
-            $msg = "Update settings saved. Mode: {$mode}. Nightly check: {$enable_check}.";
         }
 
         if ($section === 'backup') {
@@ -154,7 +128,7 @@ if (!$msg && isset($_GET['msg'])) {
     } elseif ($_GET['msg'] === 'update_triggered') {
         $msg = 'Update applied. Now running version ' . htmlspecialchars(wgm_version()) . '.';
     } elseif ($_GET['msg'] === 'access_public') {
-        $msg = 'Dashboard is now PUBLIC — reachable from the internet. Make sure your password is strong.';
+        $msg = 'Dashboard is now PUBLIC over HTTPS (self-signed cert — expect a browser trust warning). Reachable from the internet; make sure your password is strong.';
         $msg_type = 'success';
     } elseif ($_GET['msg'] === 'access_private') {
         $msg = 'Dashboard is now PRIVATE — home network + VPN only. If you were connected over a public address, reconnect via your LAN or the VPN.';
@@ -403,8 +377,9 @@ layout_sidebar();
 
                 <?php if ($is_public): ?>
                     <p style="font-size:.8rem; color:var(--muted); margin-bottom:.6rem;">
-                        Anyone who can reach this server's address can open the login page.
-                        Switch back to private to limit it to your home network and the VPN.
+                        Served over HTTPS (self-signed) and reachable from the internet.
+                        Anyone who can reach this server can open the login page. Switch back to
+                        private to limit it to your home network and the VPN (reverts to plain HTTP).
                     </p>
                     <form method="POST" action="action.php">
                         <input type="hidden" name="action" value="access_private">
@@ -414,13 +389,14 @@ layout_sidebar();
                 <?php else: ?>
                     <p style="font-size:.8rem; color:var(--muted); margin-bottom:.6rem;">
                         Only your home network and VPN clients can reach the dashboard.
-                        Exposing it publicly is not recommended unless you understand the risk.
+                        Going public switches it to HTTPS with a self-signed certificate (your
+                        browser will show a one-time trust warning) — only do this if you understand the risk.
                     </p>
                     <form method="POST" action="action.php"
-                          onsubmit="return confirm('Expose the dashboard to the public internet? Make sure your password is strong.');">
+                          onsubmit="return confirm('Expose the dashboard to the public internet over HTTPS? Make sure your password is strong.');">
                         <input type="hidden" name="action" value="access_public">
                         <input type="hidden" name="csrf"   value="<?= $_SESSION['csrf'] ?>">
-                        <button type="submit" class="btn btn-sm btn-secondary">Expose to public internet</button>
+                        <button type="submit" class="btn btn-sm btn-secondary">Expose to public (HTTPS)</button>
                     </form>
                 <?php endif; ?>
             </div>

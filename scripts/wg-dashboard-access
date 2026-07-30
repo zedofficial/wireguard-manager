@@ -1,51 +1,119 @@
 #!/usr/bin/env bash
 # =============================================================================
-# wg-dashboard-access
+# wg-dashboard-access  <private|public>
 # WireGuard Manager — switch the dashboard between private and public access.
 #
-#   private  — reachable only from home/LAN (private IP ranges) + VPN clients
-#   public   — also reachable from the public internet
+#   private — plain HTTP on :80, reachable only from private/LAN ranges + VPN.
+#   public  — HTTPS on :443 with a self-signed cert; :80 redirects to :443;
+#             reachable from anywhere. (Self-signed means browsers show a one-time
+#             trust warning — expected for a personal server without a domain.)
 #
-# Updates the Apache vhost (Require directive) and UFW rules, records the choice
-# in config.env, and reloads Apache. Called by the dashboard via sudo, or by hand.
+# This script is the single authority for the Apache vhost(s). It regenerates the
+# config, validates it with `apache2ctl configtest` BEFORE reloading (so a bad
+# config can never take the dashboard down), updates UFW, and records the choice
+# in config.env. Called by the dashboard via sudo, or by hand.
 #
-# Usage:
-#   sudo wg-dashboard-access private
-#   sudo wg-dashboard-access public
+# Prints "OK: ..." on success, "ERROR: ..." on failure (non-zero exit).
 # =============================================================================
 set -euo pipefail
 
-VHOST="/etc/apache2/sites-available/wireguard-manager.conf"
 CONF_ENV="/opt/wireguard/config.env"
+DOCROOT="/var/www/html/wireguard-manager"
+HTTP_VHOST="/etc/apache2/sites-available/wireguard-manager.conf"
+SSL_VHOST="/etc/apache2/sites-available/wireguard-manager-ssl.conf"
+CERT="/etc/ssl/certs/wgm-selfsigned.crt"
+KEY="/etc/ssl/private/wgm-selfsigned.key"
 PRIVATE_REQUIRE="Require ip 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 127.0.0.1 ::1"
-PUBLIC_REQUIRE="Require all granted"
 
 [[ "$EUID" -ne 0 ]] && { echo "ERROR: run as root"; exit 1; }
 
 MODE="${1:-}"
-case "${MODE}" in
-    private) REQUIRE="${PRIVATE_REQUIRE}" ;;
-    public)  REQUIRE="${PUBLIC_REQUIRE}"  ;;
-    *) echo "Usage: wg-dashboard-access <private|public>"; exit 1 ;;
-esac
+case "${MODE}" in private|public) ;; *) echo "Usage: wg-dashboard-access <private|public>"; exit 1 ;; esac
 
-[[ -f "${VHOST}" ]] || { echo "ERROR: vhost not found (${VHOST}). Is the dashboard installed?"; exit 1; }
+SERVERNAME="$(hostname -f 2>/dev/null || hostname 2>/dev/null || echo wireguard-manager)"
 
-# ---- Rewrite the Require line in the vhost (preserve indentation) ----
-if grep -qE '^[[:space:]]*Require ' "${VHOST}"; then
-    sed -i -E "s|^([[:space:]]*)Require .*|\1${REQUIRE}|" "${VHOST}"
+write_http_serve_vhost() {   # private: serve the dashboard on :80, private-only
+    cat > "${HTTP_VHOST}" <<EOF
+<VirtualHost *:80>
+    ServerName ${SERVERNAME}
+    ServerAlias *
+    DocumentRoot ${DOCROOT}
+    DirectoryIndex index.php
+    <Directory ${DOCROOT}>
+        AllowOverride All
+        ${PRIVATE_REQUIRE}
+        Options -Indexes
+    </Directory>
+    ErrorLog  \${APACHE_LOG_DIR}/wgm_error.log
+    CustomLog \${APACHE_LOG_DIR}/wgm_access.log combined
+</VirtualHost>
+EOF
+}
+
+write_http_redirect_vhost() {   # public: :80 permanently redirects to https
+    cat > "${HTTP_VHOST}" <<EOF
+<VirtualHost *:80>
+    ServerName ${SERVERNAME}
+    ServerAlias *
+    RewriteEngine On
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+    ErrorLog  \${APACHE_LOG_DIR}/wgm_error.log
+</VirtualHost>
+EOF
+}
+
+write_ssl_vhost() {   # public: serve the dashboard on :443
+    cat > "${SSL_VHOST}" <<EOF
+<VirtualHost *:443>
+    ServerName ${SERVERNAME}
+    ServerAlias *
+    DocumentRoot ${DOCROOT}
+    DirectoryIndex index.php
+    SSLEngine on
+    SSLCertificateFile ${CERT}
+    SSLCertificateKeyFile ${KEY}
+    <Directory ${DOCROOT}>
+        AllowOverride All
+        Require all granted
+        Options -Indexes
+    </Directory>
+    ErrorLog  \${APACHE_LOG_DIR}/wgm_ssl_error.log
+    CustomLog \${APACHE_LOG_DIR}/wgm_ssl_access.log combined
+</VirtualHost>
+EOF
+}
+
+ensure_cert() {
+    [[ -f "${CERT}" && -f "${KEY}" ]] && return 0
+    command -v openssl >/dev/null 2>&1 || return 1
+    mkdir -p "$(dirname "${KEY}")" "$(dirname "${CERT}")"
+    openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+        -keyout "${KEY}" -out "${CERT}" -subj "/CN=${SERVERNAME}" >/dev/null 2>&1 || return 1
+    chmod 600 "${KEY}"; chmod 644 "${CERT}"
+}
+
+if [[ "${MODE}" == "public" ]]; then
+    ensure_cert || { echo "ERROR: could not generate TLS certificate (is openssl installed?)"; exit 1; }
+    a2enmod ssl rewrite   >/dev/null 2>&1 || true
+    write_http_redirect_vhost
+    write_ssl_vhost
+    a2ensite wireguard-manager.conf     >/dev/null 2>&1 || true
+    a2ensite wireguard-manager-ssl.conf >/dev/null 2>&1 || true
 else
-    echo "ERROR: no Require directive found in ${VHOST}"; exit 1
+    a2enmod rewrite >/dev/null 2>&1 || true
+    write_http_serve_vhost
+    a2dissite wireguard-manager-ssl.conf >/dev/null 2>&1 || true
+    rm -f "${SSL_VHOST}"
+    a2ensite wireguard-manager.conf >/dev/null 2>&1 || true
 fi
 
-# ---- Validate the config before reloading; revert the change if it's broken ----
+# Validate the config before applying — never leave Apache broken.
 if ! apache2ctl configtest >/dev/null 2>&1 && ! apachectl configtest >/dev/null 2>&1; then
-    echo "ERROR: Apache config test failed after edit; not reloading"; exit 1
+    echo "ERROR: apache config test failed; not reloading"; exit 1
 fi
 
-# ---- Adjust UFW rules ----
+# Firewall
 if command -v ufw &>/dev/null; then
-    # VPN access is always allowed
     ufw allow in on wg0 to any port 80 >/dev/null 2>&1 || true
     if [[ "${MODE}" == "public" ]]; then
         ufw allow 80/tcp  >/dev/null 2>&1 || true
@@ -59,7 +127,7 @@ if command -v ufw &>/dev/null; then
     fi
 fi
 
-# ---- Record the choice in config.env ----
+# Record the choice
 if [[ -f "${CONF_ENV}" ]]; then
     NEWVAL="false"; [[ "${MODE}" == "public" ]] && NEWVAL="true"
     if grep -q '^DASHBOARD_PUBLIC=' "${CONF_ENV}"; then
@@ -69,7 +137,7 @@ if [[ -f "${CONF_ENV}" ]]; then
     fi
 fi
 
-# ---- Reload Apache (no downtime) ----
-systemctl reload apache2 2>/dev/null || systemctl restart apache2 2>/dev/null || true
+# Restart (not just reload) so newly enabled modules like mod_ssl are loaded.
+systemctl restart apache2 2>/dev/null || systemctl reload apache2 2>/dev/null || true
 
 echo "OK: dashboard access set to ${MODE}"

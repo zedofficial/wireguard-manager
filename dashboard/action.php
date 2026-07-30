@@ -5,7 +5,7 @@
 // All actions require authentication and a valid CSRF token.
 // Never called directly — always POSTed from the dashboard.
 // =============================================================================
-session_start();
+require __DIR__ . '/bootstrap.php';
 
 // ---- Auth guard ----
 if (!isset($_SESSION['authenticated'])) {
@@ -73,9 +73,8 @@ $code   = 0;
 
 exec($cmd . ' 2>&1', $output, $code);
 
-// Log the action
-$log_entry = date('Y-m-d H:i:s') . " [DASHBOARD] action={$action} exit={$code}\n";
-@file_put_contents('/var/log/wireguard-manager/install.log', $log_entry, FILE_APPEND);
+// Log the action to the dashboard audit log
+wgm_audit("action={$action} exit={$code}");
 
 // ---- Redirect with result ----
 $redirect = $redirect_map[$action];

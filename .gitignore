@@ -1,0 +1,7 @@
+# Local debug screenshots — never publish
+PXL_*.jpg
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp

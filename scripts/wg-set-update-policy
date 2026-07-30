@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# =============================================================================
+# wg-set-update-policy  <auto_update:true|false>  <enable_check:true|false>
+# WireGuard Manager — set the update policy: whether nightly checks run, and
+# whether updates auto-apply. Writes AUTO_UPDATE / ENABLE_UPDATE_CHECK in
+# config.env and creates/removes the cron job. Root-owned helper called by the
+# dashboard via sudo.
+#
+# Prints "OK" on success, "ERROR: ..." on failure (non-zero exit).
+# =============================================================================
+set -euo pipefail
+
+CONF="/opt/wireguard/config.env"
+CRON="/etc/cron.d/wireguard-update-check"
+LOG_DIR="/var/log/wireguard-manager"
+BIN_DIR="/usr/local/bin"
+
+[[ "$EUID" -ne 0 ]] && { echo "ERROR: must run as root"; exit 1; }
+[[ -f "${CONF}" ]] || { echo "ERROR: config.env not found"; exit 1; }
+
+AUTO_UPDATE="${1:-}"
+ENABLE_CHECK="${2:-}"
+
+case "${AUTO_UPDATE}" in true|false) ;; *) echo "ERROR: auto_update must be true|false"; exit 1 ;; esac
+case "${ENABLE_CHECK}" in true|false) ;; *) echo "ERROR: enable_check must be true|false"; exit 1 ;; esac
+
+set_kv() {
+    local key="$1" val="$2"
+    if grep -q "^${key}=" "${CONF}"; then
+        sed -i "s|^${key}=.*|${key}=\"${val}\"|" "${CONF}"
+    else
+        echo "${key}=\"${val}\"" >> "${CONF}"
+    fi
+}
+
+set_kv AUTO_UPDATE   "${AUTO_UPDATE}"
+set_kv ENABLE_UPDATE_CHECK "${ENABLE_CHECK}"
+
+if [[ "${ENABLE_CHECK}" == "true" ]]; then
+    cat > "${CRON}" <<CRON
+# WireGuard Manager — update check
+0 1 * * * root ${BIN_DIR}/wg-check-update >> ${LOG_DIR}/update.log 2>&1
+@reboot root sleep 60 && ${BIN_DIR}/wg-check-update >> ${LOG_DIR}/update.log 2>&1
+CRON
+    chmod 644 "${CRON}"
+else
+    rm -f "${CRON}"
+fi
+
+echo "OK"

@@ -5,7 +5,7 @@
 // Reached automatically by layout.php while the password is still the default,
 // and usable any time to change the password.
 // =============================================================================
-session_start();
+require __DIR__ . '/bootstrap.php';
 
 // ---- Auth guard ----
 if (!isset($_SESSION['authenticated'])) {
@@ -44,9 +44,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exec('printf %s ' . escapeshellarg($new) . ' | sudo /usr/local/bin/wg-dashboard-passwd --stdin 2>&1', $out, $code);
         if ($code === 0 && in_array('OK', $out, true)) {
             $ok = true;
+            // Refresh this session's password stamp to the new mtime so it stays
+            // valid, while any OTHER existing sessions get invalidated on their
+            // next request (bootstrap.php compares against this stamp).
+            $_SESSION['pw_stamp'] = (string) @filemtime('/opt/wireguard/dashboard.passwd');
+            session_regenerate_id(true);
             $_SESSION['csrf'] = bin2hex(random_bytes(32));
-            @file_put_contents('/var/log/wireguard-manager/install.log',
-                date('Y-m-d H:i:s') . " [DASHBOARD] action=change_password exit=0\n", FILE_APPEND);
+            wgm_audit('action=change_password exit=0');
         } else {
             $error = 'Could not update password: ' . htmlspecialchars(implode(' ', $out));
         }

@@ -17,11 +17,9 @@ function csrf_ok(): bool {
     return hash_equals($_SESSION['csrf'] ?? '', $_POST['csrf'] ?? '');
 }
 
-// Audit trail — record every client action to the install log (same format as action.php).
+// Audit trail — record every client action to the dashboard audit log.
 function audit(string $action, int $code = 0, string $detail = ''): void {
-    $line = date('Y-m-d H:i:s') . " [DASHBOARD] action={$action} exit={$code}"
-          . ($detail !== '' ? " {$detail}" : '') . "\n";
-    @file_put_contents('/var/log/wireguard-manager/install.log', $line, FILE_APPEND);
+    wgm_audit("action={$action} exit={$code}" . ($detail !== '' ? " {$detail}" : ''));
 }
 
 // ---- Sanitize name param ----

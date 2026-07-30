@@ -37,6 +37,9 @@ bin scripts/wg-show-qr
 bin scripts/wg-get-config
 bin scripts/wg-dashboard-passwd
 bin scripts/wg-dashboard-access
+bin scripts/wg-set-dns
+bin scripts/wg-set-ddns
+bin scripts/wg-set-update-policy
 
 # ---- Update system ----
 bin scripts/wg-update
@@ -46,6 +49,7 @@ bin scripts/wg-check-update
 bin scripts/wg-reset
 
 # ---- Dashboard (PHP) ----
+web dashboard/bootstrap.php
 web dashboard/layout.php
 web dashboard/index.php
 web dashboard/login.php

@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# =============================================================================
+# wg-set-ddns   (reads key=value lines from STDIN)
+# WireGuard Manager — (re)configure the Dynamic DNS updater from the dashboard.
+# Credentials come in on STDIN (never argv), so tokens/passwords don't leak into
+# the process list. Regenerates /opt/wireguard/ddns/update.sh and its cron.
+#
+# STDIN keys:
+#   provider=duckdns|noip|cloudflare|none
+#   duckdns_sub, duckdns_token
+#   noip_host, noip_user, noip_pass
+#   cf_zone, cf_record, cf_token, cf_rname
+#
+# Prints "OK" on success, "ERROR: ..." on failure (non-zero exit).
+# =============================================================================
+set -euo pipefail
+
+DDNS_DIR="/opt/wireguard/ddns"
+SCRIPT="${DDNS_DIR}/update.sh"
+CRON="/etc/cron.d/wireguard-ddns"
+LOG="/var/log/wireguard-manager/ddns.log"
+
+[[ "$EUID" -ne 0 ]] && { echo "ERROR: must run as root"; exit 1; }
+mkdir -p "${DDNS_DIR}"
+
+# ---- Read key=value pairs from stdin ----
+declare -A F=()
+while IFS='=' read -r k v; do
+    [[ -z "${k}" ]] && continue
+    v="${v%$'\r'}"          # tolerate CRLF
+    F["${k}"]="${v}"
+done
+
+provider="${F[provider]:-}"
+
+write_cron() {
+    echo "*/5 * * * * root bash ${SCRIPT} >> ${LOG} 2>&1" > "${CRON}"
+    chmod 644 "${CRON}"
+}
+
+case "${provider}" in
+    duckdns)
+        sub="${F[duckdns_sub]:-}"; token="${F[duckdns_token]:-}"
+        [[ -z "${sub}" || -z "${token}" ]] && { echo "ERROR: DuckDNS needs subdomain and token"; exit 1; }
+        {
+            echo '#!/usr/bin/env bash'
+            printf 'SUBDOMAIN=%q\n' "${sub}"
+            printf 'TOKEN=%q\n'     "${token}"
+            printf 'LOG_FILE=%q\n'  "${LOG}"
+            echo 'IP="$(curl -sf --max-time 10 https://api.ipify.org 2>/dev/null)"'
+            echo '[[ -z "${IP}" ]] && { echo "$(date) [WARN] no public IP" >> "${LOG_FILE}"; exit 1; }'
+            echo 'RESP="$(curl -sf --max-time 10 "https://www.duckdns.org/update?domains=${SUBDOMAIN}&token=${TOKEN}&ip=${IP}")"'
+            echo 'echo "$(date) DuckDNS IP=${IP} resp=${RESP}" >> "${LOG_FILE}"'
+        } > "${SCRIPT}"
+        chmod 700 "${SCRIPT}"; write_cron; echo "OK" ;;
+
+    noip)
+        host="${F[noip_host]:-}"; user="${F[noip_user]:-}"; pass="${F[noip_pass]:-}"
+        [[ -z "${host}" || -z "${user}" || -z "${pass}" ]] && { echo "ERROR: No-IP needs hostname, username, password"; exit 1; }
+        {
+            echo '#!/usr/bin/env bash'
+            printf 'HOSTNAME=%q\n' "${host}"
+            printf 'USERNAME=%q\n' "${user}"
+            printf 'PASSWORD=%q\n' "${pass}"
+            printf 'LOG_FILE=%q\n' "${LOG}"
+            echo 'IP="$(curl -sf --max-time 10 https://api.ipify.org 2>/dev/null)"'
+            echo '[[ -z "${IP}" ]] && { echo "$(date) [WARN] no public IP" >> "${LOG_FILE}"; exit 1; }'
+            echo 'RESP="$(curl -sf --max-time 10 -u "${USERNAME}:${PASSWORD}" "https://dynupdate.no-ip.com/nic/update?hostname=${HOSTNAME}&myip=${IP}" -A "WireGuardManager/1.0")"'
+            echo 'echo "$(date) No-IP IP=${IP} resp=${RESP}" >> "${LOG_FILE}"'
+        } > "${SCRIPT}"
+        chmod 700 "${SCRIPT}"; write_cron; echo "OK" ;;
+
+    cloudflare)
+        zone="${F[cf_zone]:-}"; record="${F[cf_record]:-}"; token="${F[cf_token]:-}"; rname="${F[cf_rname]:-}"
+        [[ -z "${zone}" || -z "${record}" || -z "${token}" || -z "${rname}" ]] && { echo "ERROR: all Cloudflare fields required"; exit 1; }
+        {
+            echo '#!/usr/bin/env bash'
+            printf 'ZONE=%q\n'   "${zone}"
+            printf 'RECORD=%q\n' "${record}"
+            printf 'TOKEN=%q\n'  "${token}"
+            printf 'RNAME=%q\n'  "${rname}"
+            printf 'LOG_FILE=%q\n' "${LOG}"
+            echo 'IP="$(curl -sf --max-time 10 https://api.ipify.org 2>/dev/null)"'
+            echo '[[ -z "${IP}" ]] && { echo "$(date) [WARN] no public IP" >> "${LOG_FILE}"; exit 1; }'
+            echo 'RESP="$(curl -sf --max-time 10 -X PATCH "https://api.cloudflare.com/client/v4/zones/${ZONE}/dns_records/${RECORD}" -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" --data "{\"type\":\"A\",\"name\":\"${RNAME}\",\"content\":\"${IP}\",\"ttl\":60,\"proxied\":false}")"'
+            echo 'echo "$(date) Cloudflare IP=${IP} resp=${RESP}" >> "${LOG_FILE}"'
+        } > "${SCRIPT}"
+        chmod 700 "${SCRIPT}"; write_cron; echo "OK" ;;
+
+    none)
+        rm -f "${CRON}"
+        echo "OK" ;;
+
+    *)
+        echo "ERROR: unknown provider: ${provider}"; exit 1 ;;
+esac

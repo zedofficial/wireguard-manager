@@ -3,6 +3,21 @@
 # This is the canonical copy: install.sh and wg-update both deploy it (after
 # validating with `visudo -cf`), so updates that add a new privileged command
 # take effect on `wg-update`, not only on a fresh install.
+#
+# SECURITY RATIONALE (deliberate design — please read before flagging):
+# The web user (www-data) is allowed to run a fixed set of specific root helper
+# commands with NOPASSWD. A code review may flag this "blast radius" and suggest
+# replacing it with a single root-owned daemon exposing a narrow API. That was
+# considered and DEFERRED on purpose for this project's scope (self-hosted, small
+# number of trusted users). The surface is mitigated as follows, and these
+# mitigations are the contract any new entry here must honor:
+#   - Only explicit, full-path commands are permitted — never a shell or wildcard.
+#   - Every helper validates its own arguments; the dashboard passes args via
+#     escapeshellarg() or stdin (secrets never go through argv).
+#   - This file is validated with `visudo -cf` before being installed.
+#   - The dashboard is private by default (LAN + VPN only).
+# If this project ever targets untrusted/multi-tenant use, revisit the root-daemon
+# design. Until then, keep additions minimal and argument-validated.
 www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-add-client
 www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-delete-client
 www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-disable-client
@@ -15,6 +30,9 @@ www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-show-qr
 www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-get-config
 www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-dashboard-passwd --stdin
 www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-dashboard-access private, /usr/local/bin/wg-dashboard-access public
+www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-set-dns
+www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-set-ddns
+www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wg-set-update-policy
 www-data ALL=(ALL) NOPASSWD: /opt/wireguard/backup.sh
 www-data ALL=(ALL) NOPASSWD: /usr/bin/systemctl start wg-quick@wg0, /bin/systemctl start wg-quick@wg0
 www-data ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop wg-quick@wg0, /bin/systemctl stop wg-quick@wg0

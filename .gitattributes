@@ -1,0 +1,19 @@
+# These files are deployed to Linux servers and served raw from GitHub, so they
+# MUST use LF line endings. CRLF in a shell script breaks the shebang on Linux
+# ("bad interpreter: /usr/bin/env bash^M"). Force LF for everything regardless of
+# the machine's git autocrlf setting.
+* text=auto eol=lf
+
+# Explicit LF for the executables (many wg-* scripts have no extension)
+*.sh                      text eol=lf
+*.php                     text eol=lf
+install.sh                text eol=lf
+reset.sh                  text eol=lf
+version                   text eol=lf
+manifest.txt              text eol=lf
+wireguard-manager.sudoers text eol=lf
+scripts/*                 text eol=lf
+
+# Binaries (ignored anyway, but never touch them)
+*.jpg binary
+*.png binary

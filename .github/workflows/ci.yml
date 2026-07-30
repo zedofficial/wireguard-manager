@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install php-cli and shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq php-cli shellcheck
+
+      # Blocking: syntax (shell + php), heredoc-generated scripts, manifest/sudoers
+      # drift, and sudoers validity. These are the invariants that have regressed.
+      - name: Integrity checks
+        run: bash tests/integrity.sh
+
+      # Advisory: surface shell style/robustness suggestions without failing the
+      # build (the large installer scripts trip many low-severity nags).
+      - name: ShellCheck (advisory)
+        continue-on-error: true
+        run: shellcheck --severity=warning install.sh reset.sh scripts/*

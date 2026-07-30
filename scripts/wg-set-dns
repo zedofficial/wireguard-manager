@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# =============================================================================
+# wg-set-dns  <comma-separated-DNS-IPs>
+# WireGuard Manager — set the DNS servers handed to new clients (CLIENT_DNS in
+# config.env). Root-owned helper called by the dashboard via sudo, so the web
+# user never needs write access to config.env.
+#
+# Prints "OK" on success, "ERROR: ..." on failure (non-zero exit).
+# =============================================================================
+set -euo pipefail
+
+CONF="/opt/wireguard/config.env"
+
+[[ "$EUID" -ne 0 ]] && { echo "ERROR: must run as root"; exit 1; }
+
+DNS="${1:-}"
+[[ -z "${DNS}" ]] && { echo "ERROR: no DNS provided"; exit 1; }
+[[ -f "${CONF}" ]] || { echo "ERROR: config.env not found"; exit 1; }
+
+# Validate: comma-separated list of valid IPv4/IPv6 addresses (defense in depth;
+# the dashboard also validates). Rebuild a normalized, trimmed list.
+normalized=""
+IFS=',' read -ra parts <<< "${DNS}"
+for raw in "${parts[@]}"; do
+    ip="$(echo "${raw}" | tr -d '[:space:]')"
+    [[ -z "${ip}" ]] && continue
+    # Accept only characters valid in IPv4/IPv6 literals — blocks shell metachars.
+    if ! [[ "${ip}" =~ ^[0-9A-Fa-f.:]+$ ]]; then
+        echo "ERROR: invalid DNS entry: ${ip}"; exit 1
+    fi
+    normalized="${normalized:+${normalized}, }${ip}"
+done
+[[ -z "${normalized}" ]] && { echo "ERROR: no valid DNS entries"; exit 1; }
+
+# Update CLIENT_DNS in place (values are IP-only, safe as a sed replacement).
+if grep -q '^CLIENT_DNS=' "${CONF}"; then
+    sed -i "s|^CLIENT_DNS=.*|CLIENT_DNS=\"${normalized}\"|" "${CONF}"
+else
+    echo "CLIENT_DNS=\"${normalized}\"" >> "${CONF}"
+fi
+
+echo "OK"

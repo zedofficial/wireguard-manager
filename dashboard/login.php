@@ -3,7 +3,7 @@
 // login.php — WireGuard Manager — Login
 // Simple single-password login with CSRF and brute-force delay.
 // =============================================================================
-session_start();
+require __DIR__ . '/bootstrap.php';
 
 // ---- Redirect if already authenticated ----
 if (isset($_SESSION['authenticated'])) {
@@ -25,28 +25,95 @@ if (empty($_SESSION['csrf'])) {
     $_SESSION['csrf'] = bin2hex(random_bytes(32));
 }
 
+// ---- Persistent brute-force lockout (per client IP) ----
+// The per-request sleep alone doesn't stop parallel guessing, so we also cap
+// failed attempts per IP within a window. State lives in a file the web user can
+// write (PHP's session dir, else the system temp dir). Uses REMOTE_ADDR only —
+// X-Forwarded-* is deliberately NOT trusted.
+const WGM_RL_MAX    = 5;    // attempts allowed...
+const WGM_RL_WINDOW = 900;  // ...within this many seconds (15 minutes)
+
+function wgm_rl_path(): string {
+    $dir = session_save_path();
+    if (!$dir || !is_dir($dir) || !is_writable($dir)) { $dir = sys_get_temp_dir(); }
+    return rtrim($dir, '/\\') . '/wgm_login_attempts.json';
+}
+function wgm_rl_load(): array {
+    $j = json_decode((string) @file_get_contents(wgm_rl_path()), true);
+    return is_array($j) ? $j : [];
+}
+function wgm_rl_save(array $d): void {
+    @file_put_contents(wgm_rl_path(), json_encode($d), LOCK_EX);
+}
+function wgm_rl_recent(array $store, string $ip): array {
+    $now = time();
+    return array_values(array_filter($store[$ip] ?? [], static fn($t) => ($now - (int) $t) < WGM_RL_WINDOW));
+}
+/** @return array{0:bool,1:int} [locked, retry_after_seconds] */
+function wgm_rl_status(string $ip): array {
+    $hits = wgm_rl_recent(wgm_rl_load(), $ip);
+    if (count($hits) >= WGM_RL_MAX) {
+        return [true, max(1, WGM_RL_WINDOW - (time() - (int) min($hits)))];
+    }
+    return [false, 0];
+}
+function wgm_rl_fail(string $ip): void {
+    $store = wgm_rl_load();
+    $hits = wgm_rl_recent($store, $ip);
+    $hits[] = time();
+    $store[$ip] = $hits;
+    foreach (array_keys($store) as $k) {          // prune stale IPs
+        $store[$k] = wgm_rl_recent($store, $k);
+        if (!$store[$k]) { unset($store[$k]); }
+    }
+    wgm_rl_save($store);
+}
+function wgm_rl_clear(string $ip): void {
+    $store = wgm_rl_load();
+    unset($store[$ip]);
+    wgm_rl_save($store);
+}
+function wgm_lock_msg(int $retry): string {
+    $mins = (int) ceil($retry / 60);
+    return "Too many failed attempts. Try again in {$mins} minute" . ($mins === 1 ? '' : 's') . '.';
+}
+
+$client_ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
 $error = '';
 
 // ---- Handle login POST ----
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    [$locked, $retry] = wgm_rl_status($client_ip);
     $submitted_csrf = $_POST['csrf'] ?? '';
     $submitted_pass = $_POST['password'] ?? '';
 
-    if (!hash_equals($_SESSION['csrf'], $submitted_csrf)) {
+    if ($locked) {
+        // Once the cap is hit, every attempt (including parallel ones) is refused.
+        wgm_audit('login blocked (rate limit)');
+        $error = wgm_lock_msg($retry);
+    } elseif (!hash_equals($_SESSION['csrf'], $submitted_csrf)) {
         $error = 'Invalid request. Please try again.';
     } elseif (!$submitted_pass) {
         $error = 'Password is required.';
     } elseif (password_verify($submitted_pass, $stored_hash)) {
+        wgm_rl_clear($client_ip);
+        wgm_audit('login success');
         // Regenerate session ID on successful login (session fixation protection)
         session_regenerate_id(true);
         $_SESSION['authenticated'] = true;
         $_SESSION['login_time']    = time();
         $_SESSION['csrf']          = bin2hex(random_bytes(32));
+        // Stamp the password file's mtime so a later password change invalidates
+        // this session (see bootstrap.php).
+        $_SESSION['pw_stamp']      = (string) @filemtime($pass_file);
         header('Location: index.php');
         exit;
     } else {
+        wgm_rl_fail($client_ip);
+        wgm_audit('login FAILED');
         sleep(1); // Slow down brute force
-        $error = 'Incorrect password.';
+        [$nowLocked, $nowRetry] = wgm_rl_status($client_ip);
+        $error = $nowLocked ? wgm_lock_msg($nowRetry) : 'Incorrect password.';
         // Regenerate CSRF on failed attempt
         $_SESSION['csrf'] = bin2hex(random_bytes(32));
     }

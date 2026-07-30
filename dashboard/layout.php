@@ -9,8 +9,10 @@
 //   // then call layout_start() and layout_end()
 // =============================================================================
 
+// ---- Session + security bootstrap (cookie flags, headers, pw-change invalidation) ----
+require __DIR__ . '/bootstrap.php';
+
 // ---- Auth guard ----
-if (session_status() === PHP_SESSION_NONE) session_start();
 if (!isset($_SESSION['authenticated'])) {
     header('Location: login.php');
     exit;
