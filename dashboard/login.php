@@ -38,12 +38,41 @@ function wgm_rl_path(): string {
     if (!$dir || !is_dir($dir) || !is_writable($dir)) { $dir = sys_get_temp_dir(); }
     return rtrim($dir, '/\\') . '/wgm_login_attempts.json';
 }
-function wgm_rl_load(): array {
-    $j = json_decode((string) @file_get_contents(wgm_rl_path()), true);
-    return is_array($j) ? $j : [];
+/**
+ * Read-modify-write the attempt store while holding an exclusive lock for the
+ * WHOLE operation. Locking only the write is not enough: two concurrent failed
+ * logins would both read the same state, both append, and the second write
+ * would overwrite the first — so a burst of parallel guesses could collapse
+ * into a single recorded attempt and soften the cap badly.
+ */
+function wgm_rl_update(callable $mutate): void {
+    $path   = wgm_rl_path();
+    $fresh  = !file_exists($path);
+    $fh     = @fopen($path, 'c+');
+    if (!$fh) { return; }
+    // The fallback path is a world-readable temp dir; don't leak attempt history
+    // or let a local user clear their own lockout.
+    if ($fresh) { @chmod($path, 0600); }
+    if (!flock($fh, LOCK_EX)) { fclose($fh); return; }
+    $store = json_decode((string) stream_get_contents($fh), true);
+    $store = $mutate(is_array($store) ? $store : []);
+    rewind($fh);
+    ftruncate($fh, 0);
+    fwrite($fh, (string) json_encode($store));
+    fflush($fh);
+    flock($fh, LOCK_UN);
+    fclose($fh);
 }
-function wgm_rl_save(array $d): void {
-    @file_put_contents(wgm_rl_path(), json_encode($d), LOCK_EX);
+function wgm_rl_load(): array {
+    $fh = @fopen(wgm_rl_path(), 'r');
+    if (!$fh) { return []; }
+    $store = null;
+    if (flock($fh, LOCK_SH)) {
+        $store = json_decode((string) stream_get_contents($fh), true);
+        flock($fh, LOCK_UN);
+    }
+    fclose($fh);
+    return is_array($store) ? $store : [];
 }
 function wgm_rl_recent(array $store, string $ip): array {
     $now = time();
@@ -58,20 +87,22 @@ function wgm_rl_status(string $ip): array {
     return [false, 0];
 }
 function wgm_rl_fail(string $ip): void {
-    $store = wgm_rl_load();
-    $hits = wgm_rl_recent($store, $ip);
-    $hits[] = time();
-    $store[$ip] = $hits;
-    foreach (array_keys($store) as $k) {          // prune stale IPs
-        $store[$k] = wgm_rl_recent($store, $k);
-        if (!$store[$k]) { unset($store[$k]); }
-    }
-    wgm_rl_save($store);
+    wgm_rl_update(static function (array $store) use ($ip): array {
+        $hits   = wgm_rl_recent($store, $ip);
+        $hits[] = time();
+        $store[$ip] = $hits;
+        foreach (array_keys($store) as $k) {          // prune stale IPs
+            $store[$k] = wgm_rl_recent($store, $k);
+            if (!$store[$k]) { unset($store[$k]); }
+        }
+        return $store;
+    });
 }
 function wgm_rl_clear(string $ip): void {
-    $store = wgm_rl_load();
-    unset($store[$ip]);
-    wgm_rl_save($store);
+    wgm_rl_update(static function (array $store) use ($ip): array {
+        unset($store[$ip]);
+        return $store;
+    });
 }
 function wgm_lock_msg(int $retry): string {
     $mins = (int) ceil($retry / 60);

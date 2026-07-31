@@ -19,6 +19,13 @@ jobs:
       - name: Integrity checks
         run: bash checks/integrity.sh
 
+      # Verifies the assertions in checks/upgrade.sh can actually detect the
+      # changes they claim to. That script needs a live install, so this is the
+      # only part of it CI can exercise — and it's the part that would silently
+      # rot into a test that always passes.
+      - name: Upgrade-test selftest
+        run: bash checks/upgrade_selftest.sh
+
       # Advisory: surface shell style/robustness suggestions without failing the
       # build (the large installer scripts trip many low-severity nags).
       - name: ShellCheck (advisory)

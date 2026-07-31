@@ -15,10 +15,10 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 
 echo "== shell syntax =="
-for f in install.sh reset.sh scripts/*; do
+for f in install.sh reset.sh scripts/* checks/*.sh; do
     bash -n "$f" 2>/dev/null || err "bash -n $f"
 done
-ok "install.sh, reset.sh, scripts/*"
+ok "install.sh, reset.sh, scripts/*, checks/*.sh"
 
 echo "== heredoc-generated scripts parse =="
 awk "/<<UPDATER_BOOTSTRAP/{f=1;next} /^UPDATER_BOOTSTRAP\$/{f=0} f" install.sh > "${tmp}/boot.sh"

@@ -138,6 +138,29 @@ You can switch between **private** and **public** at any time from the dashboard
 **Configuration → Dashboard Access**. (Or from the terminal: `sudo wg-dashboard-access private` / `public`.)
 This updates both the Apache rule and the firewall and reloads Apache — no reinstall needed.
 
+### Private vs. public, and what each means for encryption
+
+| | Private (default) | Public |
+|---|---|---|
+| Port | `:80`, plain HTTP | `:443`, HTTPS (`:80` redirects to it) |
+| Certificate | none | self-signed, generated at switch time |
+| Reachable from | LAN + VPN clients only | anywhere |
+
+Plain HTTP is used in private mode because the traffic never leaves your LAN or
+the WireGuard tunnel — which is already encrypted. Switching to public turns on
+HTTPS automatically; you don't have to configure anything.
+
+The certificate is **self-signed**, so browsers show a one-time trust warning.
+That's expected for a personal server without a domain, and the connection is
+still encrypted once you accept it. If you're exposing the dashboard to the
+internet for anyone other than yourself, put it behind a reverse proxy with a
+real certificate (Let's Encrypt) instead — a self-signed cert can't tell a user
+apart from an attacker's substitute.
+
+**Recommendation: leave it private.** The dashboard manages VPN keys and runs
+privileged commands. If you can reach your server over the VPN, you don't need it
+public.
+
 **Default password:** `admin`
 
 The first time you log in, the dashboard **forces you to change the password** before
@@ -450,6 +473,32 @@ do **not** edit either of them when adding files.
 That's it — the new file flows to every install on the next update. (As always,
 the *very first* update after a change runs the old updater once to install the new
 one; brand-new files land on the following update, or immediately via `wg-update --force`.)
+
+---
+
+## Security
+
+Found a vulnerability? Please report it privately — see [SECURITY.md](SECURITY.md).
+Don't open a public issue for security problems.
+
+---
+
+## License
+
+[Apache License 2.0](LICENSE).
+
+You may use, run, and modify this for any purpose, including commercially. Two
+things the license asks in return:
+
+- **Modified files must state that they were changed** (§4(b)) — so a customised
+  copy is never mistaken for an official release.
+- **The name is not licensed** (§6) — a fork can't call itself WireGuard Manager.
+
+Provided **as is, without warranty of any kind**. You run it on your own servers
+at your own risk. That applies especially to modified copies: if you change it,
+whatever happens next is yours to support, not mine.
+
+Copyright © 2026 ZED Official
 
 ---
 
