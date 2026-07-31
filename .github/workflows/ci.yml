@@ -17,7 +17,7 @@ jobs:
       # Blocking: syntax (shell + php), heredoc-generated scripts, manifest/sudoers
       # drift, and sudoers validity. These are the invariants that have regressed.
       - name: Integrity checks
-        run: bash tests/integrity.sh
+        run: bash checks/integrity.sh
 
       # Advisory: surface shell style/robustness suggestions without failing the
       # build (the large installer scripts trip many low-severity nags).

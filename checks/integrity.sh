@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/integrity.sh — repo integrity checks (run from the repo root).
+# checks/integrity.sh — repo integrity checks (run from the repo root).
 # Verifies the invariants that have regressed before: shell/PHP syntax, that
 # heredoc-generated scripts still parse, that the manifest matches its bundled
 # fallback, and that the inline sudoers matches the canonical file.
@@ -72,6 +72,30 @@ if command -v visudo >/dev/null 2>&1; then
 else
     echo "  skip: visudo not installed"
 fi
+
+echo "== checksums.txt matches the working tree =="
+# wg-update refuses to install any file whose hash is not in checksums.txt, so a
+# stale list breaks every install's updater with what looks like a tampering
+# error. tools/release.sh regenerates it; this catches the case where a deployable
+# file changed without going through that path.
+if [[ ! -s checksums.txt ]]; then
+    err "checksums.txt is missing or empty"
+elif ! sha256sum -c checksums.txt >/dev/null 2>&1; then
+    err "checksums.txt is stale — re-run tools/release.sh"
+    sha256sum -c checksums.txt 2>&1 | grep -v ': OK$' | head -20 || true
+else
+    ok "$(wc -l < checksums.txt | tr -d ' ') hashes match"
+fi
+
+echo "== every deployable file is listed in checksums.txt =="
+missing=0
+while read -r f; do
+    [[ -z "$f" ]] && continue
+    awk -v want="$f" '$2==want{f=1} END{exit !f}' checksums.txt \
+        || { err "not listed in checksums.txt: $f"; missing=1; }
+done < <({ printf '%s\n' install.sh version manifest.txt reset.sh wireguard-manager.sudoers
+           find scripts dashboard -type f | sort; })
+[[ $missing -eq 0 ]] && ok "install.sh, version, manifest, reset.sh, sudoers, scripts/*, dashboard/*"
 
 echo "== version is semver =="
 grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' version || err "version file is not X.Y.Z"
